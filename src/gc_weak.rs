@@ -6,6 +6,8 @@ use crate::Mutation;
 
 use core::fmt::{self, Debug};
 
+#[derive(core::marker::CoercePointee)]
+#[repr(transparent)]
 pub struct GcWeak<'gc, T: ?Sized + 'gc> {
     pub(crate) inner: Gc<'gc, T>,
 }

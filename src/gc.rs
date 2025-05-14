@@ -23,6 +23,8 @@ use crate::{
 /// and through "generativity" such `Gc` pointers may not escape the arena they were born in or
 /// be stored inside TLS. This, combined with correct `Collect` implementations, means that `Gc`
 /// pointers will never be dangling and are always safe to access.
+#[derive(core::marker::CoercePointee)]
+#[repr(transparent)]
 pub struct Gc<'gc, T: ?Sized + 'gc> {
     pub(crate) ptr: NonNull<GcBoxInner<T>>,
     pub(crate) _invariant: Invariant<'gc>,

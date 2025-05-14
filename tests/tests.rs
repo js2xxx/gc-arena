@@ -8,8 +8,8 @@ use rand::distributions::Distribution;
 use std::{collections::HashMap, rc::Rc};
 
 use gc_arena::{
-    arena::CollectionPhase, metrics::Pacing, static_collect, unsize, Arena, Collect,
-    DynamicRootSet, Gc, GcWeak, Lock, RefLock, Rootable,
+    arena::CollectionPhase, metrics::Pacing, static_collect, Arena, Collect, DynamicRootSet, Gc,
+    GcWeak, Lock, RefLock, Rootable,
 };
 
 #[test]
@@ -91,7 +91,7 @@ fn dyn_sized_allocation() {
 
     let mut arena = Arena::<Rootable![TestRoot<'_>]>::new(|mc| {
         let array: [_; SIZE] = core::array::from_fn(|_| Gc::new(mc, counter.clone()));
-        let slice = unsize!(Gc::new(mc, array) => [_]);
+        let slice = Gc::new(mc, array);
         TestRoot { slice }
     });
 
@@ -102,7 +102,7 @@ fn dyn_sized_allocation() {
 
     // Drop all the RefCounters.
     arena.mutate_root(|mc, root| {
-        root.slice = unsize!(Gc::new(mc, []) => [_]);
+        root.slice = Gc::new(mc, []);
     });
     arena.finish_cycle();
 
@@ -491,16 +491,16 @@ fn test_unsize() {
         let gc: Gc<'_, String> = Gc::new(mc, "Hello world!".into());
         let gc_weak = Gc::downgrade(gc);
 
-        let dyn_gc = unsize!(gc => dyn Display);
-        let dyn_weak = unsize!(gc_weak => dyn Display);
+        let dyn_gc: Gc<'_, dyn Display> = gc;
+        let dyn_weak: GcWeak<'_, dyn Display> = gc_weak;
         assert_eq!(dyn_gc.to_string(), "Hello world!");
         assert_eq!(dyn_weak.upgrade(mc).unwrap().to_string(), "Hello world!");
 
         let gc: Gc<'_, RefLock<i32>> = Gc::new(mc, RefLock::new(12345));
         let gc_weak = Gc::downgrade(gc);
 
-        let dyn_gc = unsize!(gc => RefLock<dyn Display>);
-        let dyn_weak = unsize!(gc_weak => RefLock<dyn Display>);
+        let dyn_gc: Gc<'_, RefLock<dyn Display>> = gc;
+        let dyn_weak: GcWeak<'_, RefLock<dyn Display>> = gc_weak;
         assert_eq!(dyn_gc.borrow().to_string(), "12345");
         assert_eq!(dyn_weak.upgrade(mc).unwrap().borrow().to_string(), "12345");
     })

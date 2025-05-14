@@ -1,4 +1,5 @@
 #![no_std]
+#![feature(derive_coerce_pointee)]
 
 #[cfg(feature = "std")]
 extern crate std;
@@ -18,7 +19,6 @@ pub mod metrics;
 mod no_drop;
 mod static_collect;
 mod types;
-mod unsize;
 
 #[cfg(feature = "allocator-api2")]
 pub mod allocator_api;
@@ -30,7 +30,7 @@ mod hashbrown;
 pub use gc_arena_derive::__unelide_lifetimes;
 
 #[doc(hidden)]
-pub use self::{arena::__DynRootable, no_drop::__MustNotImplDrop, unsize::__CoercePtrInternal};
+pub use self::{arena::__DynRootable, no_drop::__MustNotImplDrop};
 
 pub use self::{
     arena::{Arena, Rootable},

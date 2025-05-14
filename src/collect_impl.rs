@@ -5,6 +5,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::cell::{Cell, RefCell};
 use core::marker::PhantomData;
+use core::mem::MaybeUninit;
 #[cfg(feature = "std")]
 use std::collections::{HashMap, HashSet};
 
@@ -51,6 +52,14 @@ static_collect!(std::path::PathBuf);
 static_collect!(std::ffi::OsStr);
 #[cfg(feature = "std")]
 static_collect!(std::ffi::OsString);
+
+/// For the purposes of tracing, a `MaybeUninit` is assumed to always be uninitialized. This means
+/// that the collector will never actually trace its contents. Therefore it will likely cause
+/// undefined behaviour to read a garbage collected pointer from the `MaybeUninit`, if it was set
+/// in a prior mutation.
+unsafe impl<'gc, T> Collect<'gc> for MaybeUninit<T> {
+    const NEEDS_TRACE: bool = false;
+}
 
 /// SAFETY: We know that a `&'static` reference cannot possibly point to `'gc` data, so it is safe
 /// to keep in a rooted objet and we do not have to trace through it.
