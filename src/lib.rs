@@ -1,7 +1,9 @@
 #![no_std]
 #![feature(derive_coerce_pointee)]
 #![feature(layout_for_ptr)]
+#![feature(maybe_uninit_write_slice)]
 #![feature(ptr_metadata)]
+#![cfg_attr(miri, feature(maybe_uninit_as_bytes))]
 
 #[cfg(feature = "std")]
 extern crate std;
@@ -21,6 +23,7 @@ pub mod metrics;
 mod no_drop;
 mod static_collect;
 mod types;
+mod unique_gc;
 
 #[cfg(feature = "allocator-api2")]
 pub mod allocator_api;
@@ -43,4 +46,5 @@ pub use self::{
     gc_weak::GcWeak,
     lock::{GcLock, GcRefLock, Lock, RefLock},
     static_collect::Static,
+    unique_gc::UniqueGc,
 };

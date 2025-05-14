@@ -82,7 +82,8 @@ impl GcBox {
     /// Returns the (shallow) size occupied by this box in memory.
     #[inline(always)]
     pub(crate) fn size_of_box(&self) -> usize {
-        unsafe { (self.header().vtable().box_layout)(*self) }.size()
+        let (layout, _) = unsafe { (self.header().vtable().box_layout)(*self) };
+        layout.size()
     }
 
     /// Traces the stored value.
@@ -110,8 +111,8 @@ impl GcBox {
     #[inline(always)]
     pub(crate) unsafe fn dealloc(self) {
         unsafe {
-            let layout = (self.header().vtable().box_layout)(self);
-            let ptr = self.0.as_ptr() as *mut u8;
+            let (layout, offset) = (self.header().vtable().box_layout)(self);
+            let ptr = self.0.as_ptr().byte_sub(offset) as *mut u8;
             // SAFETY: the pointer was `Box`-allocated with this layout.
             alloc::alloc::dealloc(ptr, layout);
         }
@@ -227,7 +228,7 @@ impl GcBoxHeader {
 #[repr(align(16))]
 struct CollectVtable {
     /// The layout of the `GcBox` the GC'd value is stored in.
-    box_layout: unsafe fn(GcBox) -> Layout,
+    box_layout: unsafe fn(GcBox) -> (Layout, usize),
     /// Drops the value stored in the given `GcBox` (without deallocating the box).
     drop_value: unsafe fn(GcBox),
     /// Traces the value stored in the given `GcBox`.
@@ -266,16 +267,6 @@ pub(crate) struct GcBoxInner<T: ?Sized> {
     pub(crate) value: mem::ManuallyDrop<T>,
 }
 
-impl<'gc, T: Collect<'gc>> GcBoxInner<T> {
-    #[inline(always)]
-    pub(crate) fn new(header: GcBoxHeader, t: T) -> Self {
-        Self {
-            header,
-            value: mem::ManuallyDrop::new(t),
-        }
-    }
-}
-
 impl<T: ?Sized> GcBoxInner<T> {
     pub(crate) const METADATA_OFFSET: usize =
         match Layout::new::<<T as Pointee>::Metadata>().extend(Layout::new::<GcBoxHeader>()) {
@@ -285,14 +276,16 @@ impl<T: ?Sized> GcBoxInner<T> {
 }
 
 impl<T: ?Sized + LayoutMetadata> GcBoxInner<T> {
-    pub(crate) fn box_layout(metadata: <T as Pointee>::Metadata) -> Result<Layout, LayoutError> {
+    pub(crate) fn box_layout(
+        metadata: <T as Pointee>::Metadata,
+    ) -> Result<(Layout, usize), LayoutError> {
         let value = T::layout(metadata)?;
         let header = Layout::new::<GcBoxHeader>();
         let metadata = Layout::new::<<T as Pointee>::Metadata>();
 
-        let (layout, _) = metadata.extend(header)?;
+        let (layout, offset) = metadata.extend(header)?;
         let (layout, _) = layout.extend(value)?;
-        Ok(layout)
+        Ok((layout, offset))
     }
 }
 

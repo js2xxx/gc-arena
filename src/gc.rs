@@ -4,12 +4,13 @@ use core::{
     fmt::{self, Debug, Display, Pointer},
     hash::{Hash, Hasher},
     marker::PhantomData,
+    mem::MaybeUninit,
     ops::Deref,
     ptr::NonNull,
 };
 
 use crate::{
-    Finalization,
+    Finalization, UniqueGc,
     barrier::{Unlock, Write},
     collect::{Collect, Trace},
     context::Mutation,
@@ -23,6 +24,7 @@ use crate::{
 /// and through "generativity" such `Gc` pointers may not escape the arena they were born in or
 /// be stored inside TLS. This, combined with correct `Collect` implementations, means that `Gc`
 /// pointers will never be dangling and are always safe to access.
+#[repr(transparent)]
 pub struct Gc<'gc, T: ?Sized + 'gc> {
     pub(crate) ptr: GcBox,
     pub(crate) _invariant: Invariant<'gc, T>,
@@ -86,12 +88,45 @@ impl<'gc, T: ?Sized + 'gc> Borrow<T> for Gc<'gc, T> {
 }
 
 impl<'gc, T: Collect<'gc> + 'gc> Gc<'gc, T> {
+    /// Create a new `Gc` pointer from a sized value.
     #[inline]
     pub fn new(mc: &Mutation<'gc>, t: T) -> Gc<'gc, T> {
         Gc {
             ptr: mc.allocate(t),
             _invariant: PhantomData,
         }
+    }
+
+    /// Create a new unique `Gc` pointer from a sized value.
+    #[inline]
+    pub fn unique(mc: &Mutation<'gc>, t: T) -> UniqueGc<'gc, T> {
+        UniqueGc::new(mc, t)
+    }
+}
+
+impl<'gc, T: Collect<'gc> + 'gc> Gc<'gc, T> {
+    /// Create a new uninit `Gc` pointer.
+    #[inline]
+    pub fn new_uninit(mc: &Mutation<'gc>) -> UniqueGc<'gc, MaybeUninit<T>> {
+        UniqueGc::new_uninit(mc)
+    }
+
+    /// Create a new zeroed `Gc` pointer.
+    #[inline]
+    pub fn new_zeroed(mc: &Mutation<'gc>) -> UniqueGc<'gc, MaybeUninit<T>> {
+        UniqueGc::new_zeroed(mc)
+    }
+}
+
+impl<'gc, T: Collect<'gc> + 'gc> Gc<'gc, T> {
+    /// Create a new uninit `Gc` pointer slice.
+    pub fn new_uninit_slice(mc: &Mutation<'gc>, len: usize) -> UniqueGc<'gc, [MaybeUninit<T>]> {
+        UniqueGc::new_uninit_slice(mc, len)
+    }
+
+    /// Create a new zeroed `Gc` pointer slice.
+    pub fn new_zeroed_slice(mc: &Mutation<'gc>, len: usize) -> UniqueGc<'gc, [MaybeUninit<T>]> {
+        UniqueGc::new_zeroed_slice(mc, len)
     }
 }
 

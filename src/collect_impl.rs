@@ -105,9 +105,7 @@ unsafe impl<'gc, T: Collect<'gc>> Collect<'gc> for [T] {
 
     #[inline]
     fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
-        for t in self.iter() {
-            cc.trace(t)
-        }
+        self.iter().for_each(|t| cc.trace(t));
     }
 }
 
@@ -139,9 +137,7 @@ unsafe impl<'gc, T: Collect<'gc>> Collect<'gc> for Vec<T> {
 
     #[inline]
     fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
-        for t in self {
-            cc.trace(t)
-        }
+        self.iter().for_each(|t| cc.trace(t));
     }
 }
 
@@ -150,9 +146,7 @@ unsafe impl<'gc, T: Collect<'gc>> Collect<'gc> for VecDeque<T> {
 
     #[inline]
     fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
-        for t in self {
-            cc.trace(t)
-        }
+        self.iter().for_each(|t| cc.trace(t));
     }
 }
 
@@ -161,9 +155,7 @@ unsafe impl<'gc, T: Collect<'gc>> Collect<'gc> for LinkedList<T> {
 
     #[inline]
     fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
-        for t in self {
-            cc.trace(t)
-        }
+        self.iter().for_each(|t| cc.trace(t));
     }
 }
 
@@ -195,9 +187,7 @@ where
 
     #[inline]
     fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
-        for v in self {
-            cc.trace(v);
-        }
+        self.iter().for_each(|v| cc.trace(v));
     }
 }
 
@@ -225,9 +215,7 @@ where
 
     #[inline]
     fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
-        for v in self {
-            cc.trace(v);
-        }
+        self.iter().for_each(|v| cc.trace(v));
     }
 }
 
@@ -239,9 +227,7 @@ where
 
     #[inline]
     fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
-        for v in self {
-            cc.trace(v);
-        }
+        self.iter().for_each(|v| cc.trace(v));
     }
 }
 
@@ -294,9 +280,7 @@ unsafe impl<'gc, T: Collect<'gc>, const N: usize> Collect<'gc> for [T; N] {
 
     #[inline]
     fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
-        for t in self {
-            cc.trace(t)
-        }
+        self.iter().for_each(|t| cc.trace(t));
     }
 }
 

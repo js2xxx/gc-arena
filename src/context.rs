@@ -79,19 +79,18 @@ impl<'gc> Mutation<'gc> {
 
     #[inline]
     pub(crate) fn allocate<T: Collect<'gc> + 'gc>(&self, t: T) -> GcBox {
-        let gc_box = self.context.allocate::<T>(());
+        let gc_box = self.context.allocate::<T, false>(());
         // SAFETY: The GC box is freshly allocated from the arena.
         unsafe { gc_box.unerased_value::<T>().write(t) };
         gc_box
     }
 
     #[inline]
-    #[expect(unused)]
-    pub(crate) fn allocate_uninit<T: 'gc + Collect<'gc> + LayoutMetadata + ?Sized>(
-        &self,
-        metadata: T::Metadata,
-    ) -> GcBox {
-        self.context.allocate::<T>(metadata)
+    pub(crate) fn allocate_uninit<T, const ZEROED: bool>(&self, metadata: T::Metadata) -> GcBox
+    where
+        T: 'gc + Collect<'gc> + LayoutMetadata + ?Sized,
+    {
+        self.context.allocate::<T, false>(metadata)
     }
 
     #[inline]
@@ -372,35 +371,35 @@ impl Context {
         cx.log_progress("GC: yielding...");
     }
 
-    fn allocate<'gc, T: Collect<'gc> + LayoutMetadata + ?Sized>(
-        &self,
-        metadata: T::Metadata,
-    ) -> GcBox {
+    fn allocate<'gc, T, const ZEROED: bool>(&self, metadata: T::Metadata) -> GcBox
+    where
+        T: Collect<'gc> + LayoutMetadata + ?Sized,
+    {
         let header = GcBoxHeader::new::<T>();
         header.set_next(self.all.get());
         header.set_live(true);
         header.set_needs_trace(T::NEEDS_TRACE);
 
-        let alloc_layout =
+        let (alloc_layout, offset) =
             GcBoxInner::<T>::box_layout(metadata).expect("layout calculation failed");
 
-        // Make the generated code easier to optimize into `T` being constructed in place or at the
-        // very least only memcpy'd once.
-        // For more information, see: https://github.com/kyren/gc-arena/pull/14
         let gc_box = unsafe {
-            let mem = alloc::alloc::alloc(alloc_layout);
+            let mem = if ZEROED {
+                alloc::alloc::alloc_zeroed(alloc_layout)
+            } else {
+                alloc::alloc::alloc(alloc_layout)
+            };
             if mem.is_null() {
                 alloc::alloc::handle_alloc_error(alloc_layout);
             }
+
             mem.cast::<T::Metadata>().write(metadata);
 
-            let uninit = mem
-                .byte_add(GcBoxInner::<T>::METADATA_OFFSET)
-                .cast::<GcBoxInner<()>>();
-            uninit.write(GcBoxInner::new(header, ()));
+            let uninit = mem.byte_add(offset).cast::<GcBoxHeader>();
+            uninit.write(header);
 
             let ptr = NonNull::new_unchecked(uninit);
-            GcBox::from_raw(ptr)
+            GcBox::from_raw(ptr.cast())
         };
 
         self.all.set(Some(gc_box));
