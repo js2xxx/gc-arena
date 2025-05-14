@@ -1,10 +1,26 @@
-use core::alloc::Layout;
+use core::alloc::{Layout, LayoutError};
 use core::cell::Cell;
 use core::marker::PhantomData;
-use core::ptr::NonNull;
+use core::ptr::{NonNull, Pointee};
 use core::{mem, ptr};
 
 use crate::{collect::Collect, context::Context};
+
+pub(crate) trait LayoutMetadata: Pointee {
+    fn layout(metadata: Self::Metadata) -> Result<Layout, LayoutError>;
+}
+
+impl<T> LayoutMetadata for T {
+    fn layout(_: ()) -> Result<Layout, LayoutError> {
+        Ok(Layout::new::<T>())
+    }
+}
+
+impl<T> LayoutMetadata for [T] {
+    fn layout(len: usize) -> Result<Layout, LayoutError> {
+        Layout::array::<T>(len)
+    }
+}
 
 /// A thin-pointer-sized box containing a type-erased GC object.
 /// Stores the metadata required by the GC algorithm inline (see `GcBoxInner`
@@ -14,6 +30,13 @@ use crate::{collect::Collect, context::Context};
 pub(crate) struct GcBox(NonNull<GcBoxInner<()>>);
 
 impl GcBox {
+    /// # Safety
+    ///
+    /// `ptr` must point to a valid `GcBoxInner`.
+    pub(crate) unsafe fn from_raw(ptr: NonNull<GcBoxInner<()>>) -> Self {
+        Self(ptr)
+    }
+
     /// Erases a pointer to a typed GC object.
     ///
     /// **SAFETY:** The pointer must point to a valid `GcBoxInner` allocated
@@ -22,8 +45,10 @@ impl GcBox {
     pub(crate) unsafe fn erase<T: ?Sized>(ptr: NonNull<GcBoxInner<T>>) -> Self {
         // This cast is sound because `GcBoxInner` is `repr(C)`.
         unsafe {
-            let erased = ptr.as_ptr() as *mut GcBoxInner<()>;
-            Self(NonNull::new_unchecked(erased))
+            let (erased, metadata) = ptr.to_raw_parts();
+            let gc_box = Self(erased.cast());
+            debug_assert_eq!(gc_box.metadata::<T>(), metadata);
+            gc_box
         }
     }
 
@@ -31,18 +56,33 @@ impl GcBox {
     /// `T` must be the same type that was used with `erase`, so that
     /// we can correctly compute the field offset.
     #[inline(always)]
-    fn unerased_value<T>(&self) -> *mut T {
+    pub(crate) unsafe fn unerased_value<T: ?Sized>(&self) -> *mut T {
         unsafe {
-            let ptr = self.0.as_ptr() as *mut GcBoxInner<T>;
+            let metadata = self.metadata::<T>();
+            let ptr: *mut GcBoxInner<T> = ptr::from_raw_parts_mut(self.0.as_ptr(), metadata);
             // Don't create a reference, to keep the full provenance.
             // Also, this gives us interior mutability "for free".
             ptr::addr_of_mut!((*ptr).value) as *mut T
         }
     }
 
+    unsafe fn metadata<T: ?Sized>(&self) -> <T as Pointee>::Metadata {
+        let offset = GcBoxInner::<T>::METADATA_OFFSET;
+        unsafe {
+            let ptr = self.0.byte_sub(offset);
+            ptr.cast().read()
+        }
+    }
+
     #[inline(always)]
     pub(crate) fn header(&self) -> &GcBoxHeader {
         unsafe { &self.0.as_ref().header }
+    }
+
+    /// Returns the (shallow) size occupied by this box in memory.
+    #[inline(always)]
+    pub(crate) fn size_of_box(&self) -> usize {
+        unsafe { (self.header().vtable().box_layout)(*self) }.size()
     }
 
     /// Traces the stored value.
@@ -70,7 +110,7 @@ impl GcBox {
     #[inline(always)]
     pub(crate) unsafe fn dealloc(self) {
         unsafe {
-            let layout = self.header().vtable().box_layout;
+            let layout = (self.header().vtable().box_layout)(self);
             let ptr = self.0.as_ptr() as *mut u8;
             // SAFETY: the pointer was `Box`-allocated with this layout.
             alloc::alloc::dealloc(ptr, layout);
@@ -92,13 +132,13 @@ pub(crate) struct GcBoxHeader {
 
 impl GcBoxHeader {
     #[inline(always)]
-    pub fn new<'gc, T: Collect<'gc>>() -> Self {
+    pub fn new<'gc, T: Collect<'gc> + LayoutMetadata + ?Sized>() -> Self {
         // Helper trait to materialize vtables in static memory.
         trait HasCollectVtable {
             const VTABLE: CollectVtable;
         }
 
-        impl<'gc, T: Collect<'gc>> HasCollectVtable for T {
+        impl<'gc, T: Collect<'gc> + LayoutMetadata + ?Sized> HasCollectVtable for T {
             const VTABLE: CollectVtable = CollectVtable::vtable_for::<T>();
         }
 
@@ -129,12 +169,6 @@ impl GcBoxHeader {
     #[inline(always)]
     pub(crate) fn set_next(&self, next: Option<GcBox>) {
         self.next.set(next)
-    }
-
-    /// Returns the (shallow) size occupied by this box in memory.
-    #[inline(always)]
-    pub(crate) fn size_of_box(&self) -> usize {
-        self.vtable().box_layout.size()
     }
 
     #[inline]
@@ -193,7 +227,7 @@ impl GcBoxHeader {
 #[repr(align(16))]
 struct CollectVtable {
     /// The layout of the `GcBox` the GC'd value is stored in.
-    box_layout: Layout,
+    box_layout: unsafe fn(GcBox) -> Layout,
     /// Drops the value stored in the given `GcBox` (without deallocating the box).
     drop_value: unsafe fn(GcBox),
     /// Traces the value stored in the given `GcBox`.
@@ -205,9 +239,12 @@ impl CollectVtable {
     /// Because `T: Sized`, we can recover a typed pointer
     /// directly from the erased `GcBox`.
     #[inline(always)]
-    const fn vtable_for<'gc, T: Collect<'gc>>() -> Self {
+    const fn vtable_for<'gc, T: Collect<'gc> + LayoutMetadata + ?Sized>() -> Self {
         Self {
-            box_layout: Layout::new::<GcBoxInner<T>>(),
+            box_layout: |erased| {
+                GcBoxInner::<T>::box_layout(unsafe { erased.metadata::<T>() })
+                    .expect("Layout calculation failed")
+            },
             drop_value: |erased| unsafe {
                 ptr::drop_in_place(erased.unerased_value::<T>());
             },
@@ -239,6 +276,26 @@ impl<'gc, T: Collect<'gc>> GcBoxInner<T> {
     }
 }
 
+impl<T: ?Sized> GcBoxInner<T> {
+    pub(crate) const METADATA_OFFSET: usize =
+        match Layout::new::<<T as Pointee>::Metadata>().extend(Layout::new::<GcBoxHeader>()) {
+            Ok((_, offset)) => offset,
+            Err(_) => panic!("Layout calculation failed"),
+        };
+}
+
+impl<T: ?Sized + LayoutMetadata> GcBoxInner<T> {
+    pub(crate) fn box_layout(metadata: <T as Pointee>::Metadata) -> Result<Layout, LayoutError> {
+        let value = T::layout(metadata)?;
+        let header = Layout::new::<GcBoxHeader>();
+        let metadata = Layout::new::<<T as Pointee>::Metadata>();
+
+        let (layout, _) = metadata.extend(header)?;
+        let (layout, _) = layout.extend(value)?;
+        Ok(layout)
+    }
+}
+
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub(crate) enum GcColor {
     /// An object that has not yet been reached by tracing (if we're in a tracing phase).
@@ -263,7 +320,7 @@ pub(crate) enum GcColor {
 }
 
 // Phantom type that holds a lifetime and ensures that it is invariant.
-pub(crate) type Invariant<'a> = PhantomData<Cell<&'a ()>>;
+pub(crate) type Invariant<'a, T = ()> = PhantomData<Cell<&'a T>>;
 
 /// Utility functions for tagging and untagging pointers.
 mod tagged_ptr {

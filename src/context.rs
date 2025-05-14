@@ -1,4 +1,4 @@
-use alloc::{boxed::Box, vec::Vec};
+use alloc::vec::Vec;
 use core::{
     cell::{Cell, UnsafeCell},
     cmp::Ordering::Greater,
@@ -11,7 +11,7 @@ use crate::{
     Gc, GcWeak,
     collect::{Collect, Trace},
     metrics::Metrics,
-    types::{GcBox, GcBoxHeader, GcBoxInner, GcColor, Invariant},
+    types::{GcBox, GcBoxHeader, GcBoxInner, GcColor, Invariant, LayoutMetadata},
 };
 
 /// Handle value given by arena callbacks during construction and mutation. Allows allocating new
@@ -41,19 +41,15 @@ impl<'gc> Mutation<'gc> {
     /// pointer(s) before collection is next triggered.
     #[inline]
     pub fn backward_barrier(&self, parent: Gc<'gc, ()>, child: Option<Gc<'gc, ()>>) {
-        self.context.backward_barrier(
-            unsafe { GcBox::erase(parent.ptr) },
-            child.map(|p| unsafe { GcBox::erase(p.ptr) }),
-        )
+        self.context
+            .backward_barrier(parent.ptr, child.map(|p| p.ptr))
     }
 
     /// A version of [`Mutation::backward_barrier`] that allows adopting a [`GcWeak`] child.
     #[inline]
     pub fn backward_barrier_weak(&self, parent: Gc<'gc, ()>, child: GcWeak<'gc, ()>) {
         self.context
-            .backward_barrier_weak(unsafe { GcBox::erase(parent.ptr) }, unsafe {
-                GcBox::erase(child.inner.ptr)
-            })
+            .backward_barrier_weak(parent.ptr, child.inner.ptr)
     }
 
     /// IF we are in the marking phase AND the `parent` pointer (if given) is colored black, AND
@@ -71,23 +67,31 @@ impl<'gc> Mutation<'gc> {
     #[inline]
     pub fn forward_barrier(&self, parent: Option<Gc<'gc, ()>>, child: Gc<'gc, ()>) {
         self.context
-            .forward_barrier(parent.map(|p| unsafe { GcBox::erase(p.ptr) }), unsafe {
-                GcBox::erase(child.ptr)
-            })
+            .forward_barrier(parent.map(|p| p.ptr), child.ptr)
     }
 
     /// A version of [`Mutation::forward_barrier`] that allows adopting a [`GcWeak`] child.
     #[inline]
     pub fn forward_barrier_weak(&self, parent: Option<Gc<'gc, ()>>, child: GcWeak<'gc, ()>) {
         self.context
-            .forward_barrier_weak(parent.map(|p| unsafe { GcBox::erase(p.ptr) }), unsafe {
-                GcBox::erase(child.inner.ptr)
-            })
+            .forward_barrier_weak(parent.map(|p| p.ptr), child.inner.ptr)
     }
 
     #[inline]
-    pub(crate) fn allocate<T: Collect<'gc> + 'gc>(&self, t: T) -> NonNull<GcBoxInner<T>> {
-        self.context.allocate(t)
+    pub(crate) fn allocate<T: Collect<'gc> + 'gc>(&self, t: T) -> GcBox {
+        let gc_box = self.context.allocate::<T>(());
+        // SAFETY: The GC box is freshly allocated from the arena.
+        unsafe { gc_box.unerased_value::<T>().write(t) };
+        gc_box
+    }
+
+    #[inline]
+    #[expect(unused)]
+    pub(crate) fn allocate_uninit<T: 'gc + Collect<'gc> + LayoutMetadata + ?Sized>(
+        &self,
+        metadata: T::Metadata,
+    ) -> GcBox {
+        self.context.allocate::<T>(metadata)
     }
 
     #[inline]
@@ -124,13 +128,11 @@ impl<'gc> Finalization<'gc> {
 
 impl<'gc> Trace<'gc> for Context {
     fn trace_gc(&mut self, gc: Gc<'gc, ()>) {
-        let gc_box = unsafe { GcBox::erase(gc.ptr) };
-        Context::trace(self, gc_box)
+        Context::trace(self, gc.ptr)
     }
 
     fn trace_gc_weak(&mut self, gc: GcWeak<'gc, ()>) {
-        let gc_box = unsafe { GcBox::erase(gc.inner.ptr) };
-        Context::trace_weak(self, gc_box)
+        Context::trace_weak(self, gc.inner.ptr)
     }
 }
 
@@ -209,7 +211,7 @@ impl Drop for Context {
                     while let Some(mut gc_box) = drop_resume.1.take() {
                         let header = gc_box.header();
                         drop_resume.1 = header.next();
-                        let gc_size = header.size_of_box();
+                        let gc_size = gc_box.size_of_box();
                         // SAFETY: the context owns its GC'd objects
                         unsafe {
                             if header.is_live() {
@@ -370,22 +372,35 @@ impl Context {
         cx.log_progress("GC: yielding...");
     }
 
-    fn allocate<'gc, T: Collect<'gc>>(&self, t: T) -> NonNull<GcBoxInner<T>> {
+    fn allocate<'gc, T: Collect<'gc> + LayoutMetadata + ?Sized>(
+        &self,
+        metadata: T::Metadata,
+    ) -> GcBox {
         let header = GcBoxHeader::new::<T>();
         header.set_next(self.all.get());
         header.set_live(true);
         header.set_needs_trace(T::NEEDS_TRACE);
 
-        let alloc_size = header.size_of_box();
+        let alloc_layout =
+            GcBoxInner::<T>::box_layout(metadata).expect("layout calculation failed");
 
         // Make the generated code easier to optimize into `T` being constructed in place or at the
         // very least only memcpy'd once.
         // For more information, see: https://github.com/kyren/gc-arena/pull/14
-        let (gc_box, ptr) = unsafe {
-            let mut uninitialized = Box::new(mem::MaybeUninit::<GcBoxInner<T>>::uninit());
-            core::ptr::write(uninitialized.as_mut_ptr(), GcBoxInner::new(header, t));
-            let ptr = NonNull::new_unchecked(Box::into_raw(uninitialized) as *mut GcBoxInner<T>);
-            (GcBox::erase(ptr), ptr)
+        let gc_box = unsafe {
+            let mem = alloc::alloc::alloc(alloc_layout);
+            if mem.is_null() {
+                alloc::alloc::handle_alloc_error(alloc_layout);
+            }
+            mem.cast::<T::Metadata>().write(metadata);
+
+            let uninit = mem
+                .byte_add(GcBoxInner::<T>::METADATA_OFFSET)
+                .cast::<GcBoxInner<()>>();
+            uninit.write(GcBoxInner::new(header, ()));
+
+            let ptr = NonNull::new_unchecked(uninit);
+            GcBox::from_raw(ptr)
         };
 
         self.all.set(Some(gc_box));
@@ -393,9 +408,9 @@ impl Context {
             self.sweep_prev.set(self.all.get());
         }
 
-        self.metrics.mark_gc_allocated(alloc_size);
+        self.metrics.mark_gc_allocated(alloc_layout.size());
 
-        ptr
+        gc_box
     }
 
     #[inline]
@@ -499,7 +514,7 @@ impl Context {
 
                 // Only marking the *first* time counts as a mark metric.
                 if color == GcColor::White {
-                    self.metrics.mark_gc_marked(header.size_of_box());
+                    self.metrics.mark_gc_marked(gc_box.size_of_box());
                 }
             }
         }
@@ -510,7 +525,7 @@ impl Context {
         let header = gc_box.header();
         if header.color() == GcColor::White {
             header.set_color(GcColor::WhiteWeak);
-            self.metrics.mark_gc_marked(header.size_of_box());
+            self.metrics.mark_gc_marked(gc_box.size_of_box());
         }
     }
 
@@ -573,7 +588,7 @@ impl Context {
             self.gray.push(gc_box);
             // Only marking the *first* time counts as a mark metric.
             if color == GcColor::White {
-                self.metrics.mark_gc_marked(header.size_of_box());
+                self.metrics.mark_gc_marked(gc_box.size_of_box());
             }
         }
     }
@@ -588,7 +603,7 @@ impl Context {
             // We always mark work for objects processed from both the gray and "gray again" queue.
             // When objects are placed into the "gray again" queue due to a write barrier, the
             // original work is *undone*, so we do it again here.
-            self.metrics.mark_gc_traced(gc_box.header().size_of_box());
+            self.metrics.mark_gc_traced(gc_box.size_of_box());
             gc_box.header().set_color(GcColor::Black);
 
             // If we have an object in the gray queue, take one, trace it, and turn it black.
@@ -638,7 +653,7 @@ impl Context {
         };
 
         let sweep_header = sweep.header();
-        let sweep_size = sweep_header.size_of_box();
+        let sweep_size = sweep.size_of_box();
 
         let next_box = sweep_header.next();
         self.sweep = next_box;
@@ -711,7 +726,7 @@ impl Context {
         debug_assert_eq!(header.color(), GcColor::Black);
         header.set_color(GcColor::Gray);
         self.gray_again.push(gc_box);
-        self.metrics.mark_gc_untraced(header.size_of_box());
+        self.metrics.mark_gc_untraced(gc_box.size_of_box());
     }
 }
 

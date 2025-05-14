@@ -4,7 +4,7 @@ error[E0308]: mismatched types
 13 |     field!(v, Foo, foo)
    |     ^^^^^^^-^^^^^^^^^^^
    |     |      |
-   |     |      this expression has type `&'a gc_arena::barrier::Write<Gc<'gc, Foo<'gc>>>`
+   |     |      this expression has type `&gc_arena::barrier::Write<Gc<'gc, Foo<'gc>>>`
    |     expected `Gc<'_, Foo<'_>>`, found `Foo<'_>`
    |
    = note: expected struct `Gc<'gc, Foo<'gc>>`
