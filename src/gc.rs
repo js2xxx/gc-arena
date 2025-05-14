@@ -9,13 +9,13 @@ use core::{
 };
 
 use crate::{
+    Finalization,
     barrier::{Unlock, Write},
     collect::{Collect, Trace},
     context::Mutation,
     gc_weak::GcWeak,
     static_collect::Static,
     types::{GcBox, GcBoxHeader, GcBoxInner, GcColor, Invariant},
-    Finalization,
 };
 
 /// A garbage collected pointer to a type T. Implements Copy, and is implemented as a plain machine
@@ -154,11 +154,15 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
     #[inline]
     pub unsafe fn from_ptr(ptr: *const T) -> Gc<'gc, T> {
         let layout = Layout::new::<GcBoxHeader>();
-        let (_, header_offset) = layout.extend(Layout::for_value(&*ptr)).unwrap();
-        let header_offset = -(header_offset as isize);
-        let ptr = (ptr as *mut T).byte_offset(header_offset) as *mut GcBoxInner<T>;
+        // SAFETY: `ptr` is valid and aligned guaranteed by the caller.
+        let (_, header_offset) = layout
+            .extend(unsafe { Layout::for_value_raw(ptr) })
+            .unwrap();
+        // SAFETY: `ptr` is previously obtained from `Gc::as_ptr`, so there is always a header.
+        let ptr = unsafe { (ptr as *mut T).byte_sub(header_offset) } as *mut GcBoxInner<T>;
         Gc {
-            ptr: NonNull::new_unchecked(ptr),
+            // SAFETY: `ptr` is valid and aligned guaranteed by the caller.
+            ptr: unsafe { NonNull::new_unchecked(ptr) },
             _invariant: PhantomData,
         }
     }

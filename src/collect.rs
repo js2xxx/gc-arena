@@ -14,7 +14,7 @@ pub use gc_arena_derive::Collect;
 /// deriving `Collect`. A safe way of providing internal mutability in this case is to use
 /// [`crate::lock::Lock<T>`] and [`crate::lock::RefLock<T>`], which provides internal mutability
 /// while ensuring that write barriers are correctly executed.
-/// 
+///
 /// # Safety
 ///
 ///   1. `Collect::trace` *must* trace over *every* `Gc` and `GcWeak` pointer held inside this type.

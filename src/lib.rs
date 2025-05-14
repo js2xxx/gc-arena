@@ -1,5 +1,6 @@
 #![no_std]
 #![feature(derive_coerce_pointee)]
+#![feature(layout_for_ptr)]
 
 #[cfg(feature = "std")]
 extern crate std;
