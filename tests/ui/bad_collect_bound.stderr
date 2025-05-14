@@ -22,7 +22,7 @@ error[E0277]: the trait bound `NotCollect: Collect<'gc>` is not satisfied
   |          ------- in this derive macro expansion
 ...
 8 |     field: NotCollect
-  |     ^^^^^ the trait `Collect<'gc>` is not implemented for `NotCollect`
+  |     ^^^^^^^^^^^^^^^^^ the trait `Collect<'gc>` is not implemented for `NotCollect`
   |
   = help: the following other types implement trait `Collect<'gc>`:
             &'static T

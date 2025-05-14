@@ -267,12 +267,12 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, RefLock<T>> {
     #[track_caller]
     #[inline]
     pub fn borrow(self) -> Ref<'gc, T> {
-        RefLock::borrow(self.as_ref())
+        RefLock::borrow(self.get_ref())
     }
 
     #[inline]
     pub fn try_borrow(self) -> Result<Ref<'gc, T>, BorrowError> {
-        RefLock::try_borrow(self.as_ref())
+        RefLock::try_borrow(self.get_ref())
     }
 
     #[track_caller]

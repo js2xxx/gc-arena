@@ -7,9 +7,13 @@ error[E0308]: mismatched types
    |     |      this expression has type `&'a gc_arena::barrier::Write<Gc<'gc, Foo<'gc>>>`
    |     expected `Gc<'_, Foo<'_>>`, found `Foo<'_>`
    |
-   = note: expected struct `Gc<'gc, Foo<'gc>, >`
+   = note: expected struct `Gc<'gc, Foo<'gc>>`
               found struct `Foo<'_>`
    = note: this error originates in the macro `field` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider dereferencing to access the inner value using the Deref trait
+   |
+13 |     field!(&***v, Foo, foo)
+   |            ++++
 
 error[E0606]: casting `&Gc<'_, u32>` as `*const u32` is invalid
   --> tests/ui/bad_write_field_projections.rs:17:5

@@ -168,7 +168,7 @@ impl<'gc, T: Unlock + ?Sized + 'gc> Gc<'gc, T> {
     pub fn unlock(self, mc: &Mutation<'gc>) -> &'gc T::Unlocked {
         Gc::write(mc, self);
         // SAFETY: see doc-comment.
-        unsafe { self.as_ref().unlock_unchecked() }
+        unsafe { self.get_ref().unlock_unchecked() }
     }
 }
 
@@ -178,7 +178,7 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
     /// Unlike `AsRef` or `Deref`, the returned reference isn't bound to the `Gc` itself, and
     /// will stay valid for the entirety of the current arena callback.
     #[inline]
-    pub fn as_ref(self: Gc<'gc, T>) -> &'gc T {
+    pub fn get_ref(self) -> &'gc T {
         // SAFETY: The returned reference cannot escape the current arena callback, as `&'gc T`
         // never implements `Collect` (unless `'gc` is `'static`, which is impossible here), and
         // so cannot be stored inside the GC root.
@@ -203,7 +203,7 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
         unsafe {
             mc.backward_barrier(Gc::erase(gc), None);
             // SAFETY: the write barrier stays valid until the end of the current callback.
-            Write::assume(gc.as_ref())
+            Write::assume(gc.get_ref())
         }
     }
 
@@ -253,10 +253,6 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
 impl<'gc, T: PartialEq + ?Sized + 'gc> PartialEq for Gc<'gc, T> {
     fn eq(&self, other: &Self) -> bool {
         (**self).eq(other)
-    }
-
-    fn ne(&self, other: &Self) -> bool {
-        (**self).ne(other)
     }
 }
 

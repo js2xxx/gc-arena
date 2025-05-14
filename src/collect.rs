@@ -4,13 +4,7 @@ pub use gc_arena_derive::Collect;
 
 /// A trait for garbage collected objects that can be placed into `Gc` pointers. This trait is
 /// unsafe, because `Gc` pointers inside an Arena are assumed never to be dangling, and in order to
-/// ensure this certain rules must be followed:
-///
-///   1. `Collect::trace` *must* trace over *every* `Gc` and `GcWeak` pointer held inside this type.
-///   2. Held `Gc` and `GcWeak` pointers must not be accessed inside `Drop::drop` since during drop
-///      any such pointer may be dangling.
-///   3. Internal mutability *must* not be used to adopt new `Gc` or `GcWeak` pointers without
-///      calling appropriate write barrier operations during the same arena mutation.
+/// ensure this certain rules must be followed (see the safety section).
 ///
 /// It is, however, possible to implement this trait safely by procedurally deriving it (see
 /// [`gc_arena_derive::Collect`]), which requires that every field in the structure also implement
@@ -20,6 +14,14 @@ pub use gc_arena_derive::Collect;
 /// deriving `Collect`. A safe way of providing internal mutability in this case is to use
 /// [`crate::lock::Lock<T>`] and [`crate::lock::RefLock<T>`], which provides internal mutability
 /// while ensuring that write barriers are correctly executed.
+/// 
+/// # Safety
+///
+///   1. `Collect::trace` *must* trace over *every* `Gc` and `GcWeak` pointer held inside this type.
+///   2. Held `Gc` and `GcWeak` pointers must not be accessed inside `Drop::drop` since during drop
+///      any such pointer may be dangling.
+///   3. Internal mutability *must* not be used to adopt new `Gc` or `GcWeak` pointers without
+///      calling appropriate write barrier operations during the same arena mutation.
 pub unsafe trait Collect<'gc> {
     /// As an optimization, if this type can never hold a `Gc` pointer and `trace` is unnecessary
     /// to call, you may set this to `false`. The default value is `true`, signaling that

@@ -1,6 +1,7 @@
 use alloc::{boxed::Box, vec::Vec};
 use core::{
     cell::{Cell, UnsafeCell},
+    cmp::Ordering::Greater,
     mem,
     ops::{ControlFlow, Deref, DerefMut},
     ptr::NonNull,
@@ -110,7 +111,7 @@ impl<'gc> Deref for Finalization<'gc> {
 
     fn deref(&self) -> &Self::Target {
         // SAFETY: Finalization and Mutation are #[repr(transparent)]
-        unsafe { mem::transmute::<&Self, &Mutation>(&self) }
+        unsafe { mem::transmute::<&Self, &Mutation>(self) }
     }
 }
 
@@ -247,12 +248,12 @@ impl Context {
 
     #[inline]
     pub(crate) unsafe fn mutation_context<'gc>(&self) -> &Mutation<'gc> {
-        mem::transmute::<&Self, &Mutation>(&self)
+        mem::transmute::<&Self, &Mutation>(self)
     }
 
     #[inline]
     pub(crate) unsafe fn finalization_context<'gc>(&self) -> &Finalization<'gc> {
-        mem::transmute::<&Self, &Finalization>(&self)
+        mem::transmute::<&Self, &Finalization>(self)
     }
 
     #[inline]
@@ -294,7 +295,8 @@ impl Context {
     ) {
         let mut cx = PhaseGuard::enter(self, None);
 
-        if run_until == RunUntil::PayDebt && !(cx.metrics.allocation_debt() > 0.0) {
+        let debt = cx.metrics.allocation_debt();
+        if run_until == RunUntil::PayDebt && !matches!(debt.partial_cmp(&0.0), Some(Greater)) {
             cx.log_progress("GC: paused");
             return;
         }
@@ -357,7 +359,8 @@ impl Context {
                 Phase::Drop => unreachable!(),
             }
 
-            if run_until == RunUntil::PayDebt && !(cx.metrics.allocation_debt() > 0.0) {
+            let debt = cx.metrics.allocation_debt();
+            if run_until == RunUntil::PayDebt && !matches!(debt.partial_cmp(&0.0), Some(Greater)) {
                 break;
             }
         }
@@ -414,7 +417,7 @@ impl Context {
             fn barrier(this: &Context, parent: GcBox) {
                 this.make_gray_again(parent);
             }
-            barrier(&self, parent);
+            barrier(self, parent);
         }
     }
 
@@ -430,7 +433,7 @@ impl Context {
             fn barrier(this: &Context, parent: GcBox) {
                 this.make_gray_again(parent);
             }
-            barrier(&self, parent);
+            barrier(self, parent);
         }
     }
 
@@ -450,7 +453,7 @@ impl Context {
             fn barrier(this: &Context, child: GcBox) {
                 this.trace(child);
             }
-            barrier(&self, child);
+            barrier(self, child);
         }
     }
 
@@ -470,7 +473,7 @@ impl Context {
             fn barrier(this: &Context, child: GcBox) {
                 this.trace_weak(child);
             }
-            barrier(&self, child);
+            barrier(self, child);
         }
     }
 
@@ -577,13 +580,7 @@ impl Context {
         // We look for an object first in the normal gray queue, then the "gray again" queue.
         // Processing "gray again" objects later gives them more time to be mutated again without
         // triggering another write barrier.
-        let next_gray = if let Some(gc_box) = self.gray.pop() {
-            Some(gc_box)
-        } else if let Some(gc_box) = self.gray_again.pop() {
-            Some(gc_box)
-        } else {
-            None
-        };
+        let next_gray = self.gray.pop().or_else(|| self.gray_again.pop());
 
         if let Some(gc_box) = next_gray {
             // We always mark work for objects processed from both the gray and "gray again" queue.
@@ -738,14 +735,14 @@ impl<'a> Deref for PhaseGuard<'a> {
 
     #[inline(always)]
     fn deref(&self) -> &Context {
-        &self.cx
+        self.cx
     }
 }
 
 impl<'a> DerefMut for PhaseGuard<'a> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Context {
-        &mut self.cx
+        self.cx
     }
 }
 
