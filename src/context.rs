@@ -2,16 +2,17 @@ use alloc::vec::Vec;
 use core::{
     cell::{Cell, UnsafeCell},
     cmp::Ordering::Greater,
+    marker::Unsize,
     mem,
     ops::{ControlFlow, Deref, DerefMut},
-    ptr::NonNull,
+    ptr::{NonNull, Pointee},
 };
 
 use crate::{
     Gc, GcWeak,
     collect::{Collect, Trace},
     metrics::Metrics,
-    types::{GcBox, GcBoxHeader, GcBoxInner, GcColor, Invariant, LayoutMetadata},
+    types::{GcBox, GcBoxHeader, GcBoxInner, GcColor, Invariant, MetaLayout},
 };
 
 /// Handle value given by arena callbacks during construction and mutation. Allows allocating new
@@ -78,19 +79,28 @@ impl<'gc> Mutation<'gc> {
     }
 
     #[inline]
-    pub(crate) fn allocate<T: Collect<'gc> + 'gc>(&self, t: T) -> GcBox {
-        let gc_box = self.context.allocate::<T, false>(());
-        // SAFETY: The GC box is freshly allocated from the arena.
-        unsafe { gc_box.unerased_value::<T>().write(t) };
-        gc_box
+    pub(crate) fn allocate<T, const ZEROED: bool>(
+        &self,
+        metadata: <T as Pointee>::Metadata,
+    ) -> GcBox
+    where
+        T: 'gc + Collect<'gc> + ?Sized,
+        <T as Pointee>::Metadata: MetaLayout<T>,
+    {
+        self.context.allocate::<T, false>(metadata)
     }
 
     #[inline]
-    pub(crate) fn allocate_uninit<T, const ZEROED: bool>(&self, metadata: T::Metadata) -> GcBox
+    pub(crate) fn allocate_unsize<T, U, const ZEROED: bool>(
+        &self,
+        metadata: <U as Pointee>::Metadata,
+    ) -> GcBox
     where
-        T: 'gc + Collect<'gc> + LayoutMetadata + ?Sized,
+        T: Collect<'gc> + Unsize<U> + ?Sized,
+        U: ?Sized,
+        <U as Pointee>::Metadata: MetaLayout<U>,
     {
-        self.context.allocate::<T, false>(metadata)
+        self.context.allocate_unsize::<T, U, false>(metadata)
     }
 
     #[inline]
@@ -371,17 +381,48 @@ impl Context {
         cx.log_progress("GC: yielding...");
     }
 
-    fn allocate<'gc, T, const ZEROED: bool>(&self, metadata: T::Metadata) -> GcBox
+    fn allocate<'gc, T, const ZEROED: bool>(&self, metadata: <T as Pointee>::Metadata) -> GcBox
     where
-        T: Collect<'gc> + LayoutMetadata + ?Sized,
+        T: Collect<'gc> + ?Sized,
+        <T as Pointee>::Metadata: MetaLayout<T>,
     {
         let header = GcBoxHeader::new::<T>();
+        // SAFETY: `T == U`.
+        unsafe { self.allocate_impl::<T, T, ZEROED>(metadata, header) }
+    }
+
+    fn allocate_unsize<'gc, T, U, const ZEROED: bool>(
+        &self,
+        metadata: <U as Pointee>::Metadata,
+    ) -> GcBox
+    where
+        T: Collect<'gc> + Unsize<U> + ?Sized,
+        U: ?Sized,
+        <U as Pointee>::Metadata: MetaLayout<U>,
+    {
+        let header = GcBoxHeader::new_unsize::<T, U>();
+        unsafe { self.allocate_impl::<T, U, ZEROED>(metadata, header) }
+    }
+
+    /// # Safety
+    ///
+    /// `T: Unsize<U>` or `T == U`.
+    unsafe fn allocate_impl<'gc, T, U, const ZEROED: bool>(
+        &self,
+        metadata: <U as Pointee>::Metadata,
+        header: GcBoxHeader,
+    ) -> GcBox
+    where
+        T: Collect<'gc> + ?Sized,
+        U: ?Sized,
+        <U as Pointee>::Metadata: MetaLayout<U>,
+    {
         header.set_next(self.all.get());
         header.set_live(true);
         header.set_needs_trace(T::NEEDS_TRACE);
 
         let (alloc_layout, offset) =
-            GcBoxInner::<T>::box_layout(metadata).expect("layout calculation failed");
+            GcBoxInner::<U>::box_layout(metadata).expect("layout calculation failed");
 
         let gc_box = unsafe {
             let mem = if ZEROED {
@@ -393,7 +434,7 @@ impl Context {
                 alloc::alloc::handle_alloc_error(alloc_layout);
             }
 
-            mem.cast::<T::Metadata>().write(metadata);
+            mem.cast::<<U as Pointee>::Metadata>().write(metadata);
 
             let uninit = mem.byte_add(offset).cast::<GcBoxHeader>();
             uninit.write(header);

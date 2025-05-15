@@ -125,7 +125,7 @@ impl<'gc, T: Collect<'gc> + 'gc> UniqueGc<'gc, T> {
     #[inline]
     pub fn new_uninit(mc: &Mutation<'gc>) -> UniqueGc<'gc, MaybeUninit<T>> {
         UniqueGc {
-            ptr: mc.allocate_uninit::<T, false>(()),
+            ptr: mc.allocate::<T, false>(()),
             _invariant: PhantomData,
         }
     }
@@ -147,7 +147,7 @@ impl<'gc, T: Collect<'gc> + 'gc> UniqueGc<'gc, T> {
     #[inline]
     pub fn new_zeroed(mc: &Mutation<'gc>) -> UniqueGc<'gc, MaybeUninit<T>> {
         let ret = UniqueGc {
-            ptr: mc.allocate_uninit::<T, true>(()),
+            ptr: mc.allocate::<T, true>(()),
             _invariant: PhantomData,
         };
         #[cfg(not(miri))]
@@ -187,7 +187,7 @@ impl<'gc, T: Collect<'gc> + 'gc> UniqueGc<'gc, [T]> {
     /// ```
     pub fn new_uninit_slice(mc: &Mutation<'gc>, len: usize) -> UniqueGc<'gc, [MaybeUninit<T>]> {
         UniqueGc {
-            ptr: mc.allocate_uninit::<[T], false>(len),
+            ptr: mc.allocate::<[T], false>(len),
             _invariant: PhantomData,
         }
     }
@@ -206,7 +206,7 @@ impl<'gc, T: Collect<'gc> + 'gc> UniqueGc<'gc, [T]> {
     /// ```
     pub fn new_zeroed_slice(mc: &Mutation<'gc>, len: usize) -> UniqueGc<'gc, [MaybeUninit<T>]> {
         let ret: UniqueGc<'gc, [MaybeUninit<T>]> = UniqueGc {
-            ptr: mc.allocate_uninit::<[T], true>(len),
+            ptr: mc.allocate::<[T], true>(len),
             _invariant: PhantomData,
         };
         #[cfg(not(miri))]

@@ -1,24 +1,32 @@
 use core::alloc::{Layout, LayoutError};
 use core::cell::Cell;
-use core::marker::PhantomData;
-use core::ptr::{NonNull, Pointee};
+use core::marker::{PhantomData, Unsize};
+use core::ptr::{DynMetadata, NonNull, Pointee};
 use core::{mem, ptr};
 
 use crate::{collect::Collect, context::Context};
 
-pub(crate) trait LayoutMetadata: Pointee {
-    fn layout(metadata: Self::Metadata) -> Result<Layout, LayoutError>;
+pub trait MetaLayout<T: Pointee + ?Sized>: Copy {
+    fn layout(self) -> Result<Layout, LayoutError>;
 }
 
-impl<T> LayoutMetadata for T {
-    fn layout(_: ()) -> Result<Layout, LayoutError> {
+impl<T> MetaLayout<T> for () {
+    fn layout(self) -> Result<Layout, LayoutError> {
         Ok(Layout::new::<T>())
     }
 }
 
-impl<T> LayoutMetadata for [T] {
-    fn layout(len: usize) -> Result<Layout, LayoutError> {
-        Layout::array::<T>(len)
+impl<T> MetaLayout<[T]> for usize {
+    fn layout(self) -> Result<Layout, LayoutError> {
+        Layout::array::<T>(self)
+    }
+}
+
+impl<Dyn: ?Sized, T: ?Sized + Pointee<Metadata = Self>> MetaLayout<T> for DynMetadata<Dyn> {
+    fn layout(self) -> Result<Layout, LayoutError> {
+        let ptr: *const T = ptr::from_raw_parts(ptr::null::<()>(), self);
+        // SAFETY: The metadata part is valid.
+        Ok(unsafe { Layout::for_value_raw(ptr) })
     }
 }
 
@@ -62,7 +70,7 @@ impl GcBox {
             let ptr: *mut GcBoxInner<T> = ptr::from_raw_parts_mut(self.0.as_ptr(), metadata);
             // Don't create a reference, to keep the full provenance.
             // Also, this gives us interior mutability "for free".
-            ptr::addr_of_mut!((*ptr).value) as *mut T
+            (&raw mut (*ptr).value) as *mut T
         }
     }
 
@@ -133,17 +141,52 @@ pub(crate) struct GcBoxHeader {
 
 impl GcBoxHeader {
     #[inline(always)]
-    pub fn new<'gc, T: Collect<'gc> + LayoutMetadata + ?Sized>() -> Self {
+    pub fn new<'gc, T>() -> Self
+    where
+        T: Collect<'gc> + ?Sized,
+        <T as Pointee>::Metadata: MetaLayout<T>,
+    {
         // Helper trait to materialize vtables in static memory.
         trait HasCollectVtable {
             const VTABLE: CollectVtable;
         }
 
-        impl<'gc, T: Collect<'gc> + LayoutMetadata + ?Sized> HasCollectVtable for T {
-            const VTABLE: CollectVtable = CollectVtable::vtable_for::<T>();
+        impl<'gc, T> HasCollectVtable for T
+        where
+            T: Collect<'gc> + ?Sized,
+            <T as Pointee>::Metadata: MetaLayout<T>,
+        {
+            const VTABLE: CollectVtable = CollectVtable::new::<T>();
+        }
+        let vtable: &'static _ = &<T as HasCollectVtable>::VTABLE;
+        Self {
+            next: Cell::new(None),
+            tagged_vtable: Cell::new(vtable as *const _),
+        }
+    }
+
+    #[inline(always)]
+    pub fn new_unsize<'gc, T, U>() -> Self
+    where
+        T: Collect<'gc> + Unsize<U> + ?Sized,
+        U: ?Sized,
+        <U as Pointee>::Metadata: MetaLayout<U>,
+    {
+        // Helper trait to materialize vtables in static memory.
+        trait HasCollectVtable<U: ?Sized> {
+            const VTABLE: CollectVtable;
         }
 
-        let vtable: &'static _ = &<T as HasCollectVtable>::VTABLE;
+        impl<'gc, T, U> HasCollectVtable<U> for T
+        where
+            T: Collect<'gc> + Unsize<U> + ?Sized,
+            U: ?Sized,
+            <U as Pointee>::Metadata: MetaLayout<U>,
+        {
+            const VTABLE: CollectVtable = CollectVtable::new_unsize::<T, U>();
+        }
+
+        let vtable: &'static _ = &<T as HasCollectVtable<U>>::VTABLE;
         Self {
             next: Cell::new(None),
             tagged_vtable: Cell::new(vtable as *const _),
@@ -227,7 +270,6 @@ impl GcBoxHeader {
 /// The type is over-aligned so that `GcBoxHeader` can store flags into the LSBs of the vtable pointer.
 #[repr(align(16))]
 struct CollectVtable {
-    /// The layout of the `GcBox` the GC'd value is stored in.
     box_layout: unsafe fn(GcBox) -> (Layout, usize),
     /// Drops the value stored in the given `GcBox` (without deallocating the box).
     drop_value: unsafe fn(GcBox),
@@ -236,15 +278,38 @@ struct CollectVtable {
 }
 
 impl CollectVtable {
-    /// Makes a vtable for a known, `Sized` type.
-    /// Because `T: Sized`, we can recover a typed pointer
-    /// directly from the erased `GcBox`.
+    /// Makes a vtable for a known type.
     #[inline(always)]
-    const fn vtable_for<'gc, T: Collect<'gc> + LayoutMetadata + ?Sized>() -> Self {
+    const fn new<'gc, T>() -> Self
+    where
+        T: Collect<'gc> + ?Sized,
+        <T as Pointee>::Metadata: MetaLayout<T>,
+    {
         Self {
-            box_layout: |erased| {
-                GcBoxInner::<T>::box_layout(unsafe { erased.metadata::<T>() })
-                    .expect("Layout calculation failed")
+            box_layout: |erased| unsafe {
+                GcBoxInner::<T>::box_layout(erased.metadata::<T>()).unwrap_unchecked()
+            },
+            drop_value: |erased| unsafe {
+                ptr::drop_in_place(erased.unerased_value::<T>());
+            },
+            trace_value: |erased, cc| unsafe {
+                let val = &*(erased.unerased_value::<T>());
+                val.trace(cc)
+            },
+        }
+    }
+
+    /// Makes a vtable for a known unsize type.
+    #[inline(always)]
+    const fn new_unsize<'gc, T, U>() -> Self
+    where
+        T: Collect<'gc> + Unsize<U> + ?Sized,
+        U: ?Sized,
+        <U as Pointee>::Metadata: MetaLayout<U>,
+    {
+        Self {
+            box_layout: |erased| unsafe {
+                GcBoxInner::<U>::box_layout(erased.metadata::<U>()).unwrap_unchecked()
             },
             drop_value: |erased| unsafe {
                 ptr::drop_in_place(erased.unerased_value::<T>());
@@ -275,13 +340,14 @@ impl<T: ?Sized> GcBoxInner<T> {
         };
 }
 
-impl<T: ?Sized + LayoutMetadata> GcBoxInner<T> {
-    pub(crate) fn box_layout(
-        metadata: <T as Pointee>::Metadata,
-    ) -> Result<(Layout, usize), LayoutError> {
-        let value = T::layout(metadata)?;
+impl<T: ?Sized + Pointee> GcBoxInner<T> {
+    pub(crate) fn box_layout(metadata: T::Metadata) -> Result<(Layout, usize), LayoutError>
+    where
+        T::Metadata: MetaLayout<T>,
+    {
+        let value = metadata.layout()?;
         let header = Layout::new::<GcBoxHeader>();
-        let metadata = Layout::new::<<T as Pointee>::Metadata>();
+        let metadata = Layout::new::<T::Metadata>();
 
         let (layout, offset) = metadata.extend(header)?;
         let (layout, _) = layout.extend(value)?;

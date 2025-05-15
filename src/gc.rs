@@ -3,10 +3,10 @@ use core::{
     borrow::Borrow,
     fmt::{self, Debug, Display, Pointer},
     hash::{Hash, Hasher},
-    marker::PhantomData,
+    marker::{PhantomData, Unsize},
     mem::MaybeUninit,
     ops::Deref,
-    ptr::NonNull,
+    ptr::{NonNull, Pointee},
 };
 
 use crate::{
@@ -16,7 +16,7 @@ use crate::{
     context::Mutation,
     gc_weak::GcWeak,
     static_collect::Static,
-    types::{GcBox, GcBoxHeader, GcBoxInner, GcColor, Invariant},
+    types::{GcBox, GcBoxHeader, GcBoxInner, GcColor, Invariant, MetaLayout},
 };
 
 /// A garbage collected pointer to a type T. Implements Copy, and is implemented as a plain machine
@@ -91,16 +91,32 @@ impl<'gc, T: Collect<'gc> + 'gc> Gc<'gc, T> {
     /// Create a new `Gc` pointer from a sized value.
     #[inline]
     pub fn new(mc: &Mutation<'gc>, t: T) -> Gc<'gc, T> {
-        Gc {
-            ptr: mc.allocate(t),
-            _invariant: PhantomData,
-        }
+        UniqueGc::into_gc(UniqueGc::write(Self::new_uninit(mc), t))
     }
 
     /// Create a new unique `Gc` pointer from a sized value.
     #[inline]
     pub fn unique(mc: &Mutation<'gc>, t: T) -> UniqueGc<'gc, T> {
         UniqueGc::new(mc, t)
+    }
+
+    pub fn new_unsize<Dyn>(mc: &Mutation<'gc>, t: T) -> Gc<'gc, Dyn>
+    where
+        T: Collect<'gc> + Unsize<Dyn>,
+        Dyn: ?Sized + 'gc,
+        <Dyn as Pointee>::Metadata: MetaLayout<Dyn>,
+    {
+        let ptr = core::ptr::from_ref(&t) as *const Dyn;
+        let (_, metadata) = ptr.to_raw_parts();
+
+        let gc_box = mc.allocate_unsize::<T, Dyn, false>(metadata);
+        // SAFETY: `ptr` is a uninit pointer to `Dyn` which can receive a `T`.
+        unsafe { gc_box.unerased_value::<T>().write(t) };
+
+        Gc {
+            ptr: gc_box,
+            _invariant: PhantomData,
+        }
     }
 }
 
