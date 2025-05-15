@@ -13,6 +13,7 @@ use crate::{
     collect::{Collect, Trace},
     context::Mutation,
     types::{GcBox, GcBoxHeader, GcBoxInner, Invariant, MetaLayout},
+    vec::Vec,
 };
 
 /// A uniquely-owned garbage-collected pointer to a type `T`.
@@ -435,6 +436,14 @@ impl<'gc, T: ?Sized + 'gc> Unique<'gc, T> {
     pub fn into_gc(self) -> Gc<'gc, T> {
         // SAFETY: Trivial.
         unsafe { Gc::from_ptr(Unique::into_raw(self)) }
+    }
+}
+
+impl<'gc, T: 'gc> Unique<'gc, [T]> {
+    pub fn into_vec(self) -> Vec<'gc, T> {
+        let (ptr, len) = Self::into_raw(self).to_raw_parts();
+        // SAFETY: `ptr` is valid and aligned guaranteed by the caller.
+        unsafe { Vec::from_raw_parts(ptr.cast(), len, len) }
     }
 }
 

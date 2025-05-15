@@ -3,6 +3,7 @@
 #![feature(layout_for_ptr)]
 #![feature(maybe_uninit_write_slice)]
 #![feature(ptr_metadata)]
+#![feature(trusted_len)]
 #![feature(unsize)]
 #![cfg_attr(miri, feature(maybe_uninit_as_bytes))]
 
@@ -21,6 +22,7 @@ pub mod lock;
 pub mod metrics;
 mod no_drop;
 mod types;
+pub mod vec;
 
 #[cfg(feature = "hashbrown")]
 mod hashbrown;
