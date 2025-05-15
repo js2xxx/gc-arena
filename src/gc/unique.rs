@@ -18,8 +18,8 @@ use crate::{
 
 /// A uniquely-owned garbage-collected pointer to a type `T`.
 ///
-/// Unlike [`Gc`] this pointer is known to be unique,
-/// and as such allows mutation without the use of interior mutability.
+/// Unlike [`Gc`] this pointer is known to be unique, and as such allows mutation
+/// without the use of interior mutability.
 ///
 /// [`Gc`]: crate::Gc
 /// [`Collect`]: crate::Collect

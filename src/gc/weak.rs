@@ -28,7 +28,7 @@ impl<'gc, T: ?Sized + 'gc> Debug for Weak<'gc, T> {
 unsafe impl<'gc, T: ?Sized + 'gc> Collect<'gc> for Weak<'gc, T> {
     #[inline]
     fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
-        cc.trace_gc_weak(Self::erase(*self))
+        cc.trace_weak(*self)
     }
 }
 
@@ -122,18 +122,6 @@ impl<'gc, T: ?Sized + 'gc> Weak<'gc, T> {
         // SAFETY: The caller guarantees that this is safe.
         Weak {
             inner: unsafe { Gc::cast::<U>(this.inner) },
-        }
-    }
-
-    /// Cast a `Weak` to the unit type.
-    ///
-    /// This is exactly the same as `unsafe { Weak::cast::<()>(this) }`, but we can provide this
-    /// method safely because it is always safe to dereference a `*mut ()` that has come from
-    /// casting a `*mut T`.
-    #[inline]
-    pub fn erase(this: Weak<'gc, T>) -> Weak<'gc, ()> {
-        Weak {
-            inner: Gc::erase(this.inner),
         }
     }
 

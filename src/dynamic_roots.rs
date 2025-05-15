@@ -57,7 +57,7 @@ impl<'gc> DynamicRootSet<'gc> {
         root: Gc<'gc, Root<'gc, R>>,
     ) -> DynamicRoot<R> {
         // SAFETY: We are adopting a new `Gc` pointer, so we must invoke a write barrier.
-        mc.backward_barrier(Gc::erase(self.0), Some(Gc::erase(root)));
+        mc.backward_barrier(self.0, Some(root));
 
         let mut slots = self.0.slots.borrow_mut();
         let index = slots.add(unsafe { Gc::cast(root) });

@@ -1044,7 +1044,7 @@ fn barriers() {
     // Make `node` adopt a white child pointer with a backwards barrier.
     arena.mutate(|mc, root| {
         let p = Gc::new(mc, 17);
-        mc.backward_barrier(Gc::erase(root.node), Some(Gc::erase(p)));
+        mc.backward_barrier(root.node, Some(p));
         root.node.strong_child.set(Some(p));
     });
 
@@ -1061,7 +1061,7 @@ fn barriers() {
     // Make `node` adopt a white child weak pointer with a backwards barrier.
     arena.mutate(|mc, root| {
         let w = Gc::downgrade(Gc::new(mc, 13));
-        mc.backward_barrier_weak(Gc::erase(root.node), Weak::erase(w));
+        mc.backward_barrier_weak(root.node, w);
         root.node.weak_child.set(Some(w));
     });
 
@@ -1084,7 +1084,7 @@ fn barriers() {
     // Make `node` adopt a white child pointer with a forwards barrier.
     arena.mutate(|mc, root| {
         let p = Gc::new(mc, 17);
-        mc.forward_barrier(Some(Gc::erase(root.node)), Gc::erase(p));
+        mc.forward_barrier(Some(root.node), p);
         root.node.strong_child.set(Some(p));
     });
 
@@ -1101,7 +1101,7 @@ fn barriers() {
     // Make `node` adopt a white child weak pointer with a forwards barrier.
     arena.mutate(|mc, root| {
         let w = Gc::downgrade(Gc::new(mc, 13));
-        mc.forward_barrier_weak(Some(Gc::erase(root.node)), Weak::erase(w));
+        mc.forward_barrier_weak(Some(root.node), w);
         root.node.weak_child.set(Some(w));
     });
 

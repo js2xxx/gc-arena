@@ -41,14 +41,22 @@ impl<'gc> Mutation<'gc> {
     /// method is more general, and it ensures that the `parent` pointer may adopt *any* child
     /// pointer(s) before collection is next triggered.
     #[inline]
-    pub fn backward_barrier(&self, parent: Gc<'gc, ()>, child: Option<Gc<'gc, ()>>) {
+    pub fn backward_barrier<T, U>(&self, parent: Gc<'gc, T>, child: Option<Gc<'gc, U>>)
+    where
+        T: ?Sized + 'gc,
+        U: ?Sized + 'gc,
+    {
         self.context
             .backward_barrier(parent.ptr, child.map(|p| p.ptr))
     }
 
     /// A version of [`Mutation::backward_barrier`] that allows adopting a [`Weak`] child.
     #[inline]
-    pub fn backward_barrier_weak(&self, parent: Gc<'gc, ()>, child: Weak<'gc, ()>) {
+    pub fn backward_barrier_weak<T, U>(&self, parent: Gc<'gc, T>, child: Weak<'gc, U>)
+    where
+        T: ?Sized + 'gc,
+        U: ?Sized + 'gc,
+    {
         self.context
             .backward_barrier_weak(parent.ptr, child.inner.ptr)
     }
@@ -66,14 +74,22 @@ impl<'gc> Mutation<'gc> {
     /// method is more general, and it ensures that the `child` pointer may be adopted by *any*
     /// parent pointer(s) before collection is next triggered.
     #[inline]
-    pub fn forward_barrier(&self, parent: Option<Gc<'gc, ()>>, child: Gc<'gc, ()>) {
+    pub fn forward_barrier<T, U>(&self, parent: Option<Gc<'gc, T>>, child: Gc<'gc, U>)
+    where
+        T: ?Sized + 'gc,
+        U: ?Sized + 'gc,
+    {
         self.context
             .forward_barrier(parent.map(|p| p.ptr), child.ptr)
     }
 
     /// A version of [`Mutation::forward_barrier`] that allows adopting a [`Weak`] child.
     #[inline]
-    pub fn forward_barrier_weak(&self, parent: Option<Gc<'gc, ()>>, child: Weak<'gc, ()>) {
+    pub fn forward_barrier_weak<T, U>(&self, parent: Option<Gc<'gc, T>>, child: Weak<'gc, U>)
+    where
+        T: ?Sized + 'gc,
+        U: ?Sized + 'gc,
+    {
         self.context
             .forward_barrier_weak(parent.map(|p| p.ptr), child.inner.ptr)
     }
@@ -136,11 +152,11 @@ impl<'gc> Finalization<'gc> {
 }
 
 impl<'gc> Trace<'gc> for Context {
-    fn trace_gc(&mut self, gc: Gc<'gc, ()>) {
+    fn trace_gc<T: ?Sized + 'gc>(&mut self, gc: Gc<'gc, T>) {
         Context::trace(self, gc.ptr)
     }
 
-    fn trace_gc_weak(&mut self, gc: Weak<'gc, ()>) {
+    fn trace_weak<T: ?Sized + 'gc>(&mut self, gc: Weak<'gc, T>) {
         Context::trace_weak(self, gc.inner.ptr)
     }
 }

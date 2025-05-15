@@ -1,6 +1,7 @@
 use core::{
     alloc::Layout,
     borrow::Borrow,
+    convert::Infallible,
     fmt::{self, Debug, Display, Pointer},
     hash::{Hash, Hasher},
     marker::{PhantomData, Unsize},
@@ -63,7 +64,7 @@ impl<'gc, T: ?Sized + 'gc> Clone for Gc<'gc, T> {
 unsafe impl<'gc, T: ?Sized + 'gc> Collect<'gc> for Gc<'gc, T> {
     #[inline]
     fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
-        cc.trace_gc(Self::erase(*self))
+        cc.trace_gc(*self)
     }
 }
 
@@ -178,16 +179,6 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
         }
     }
 
-    /// Cast a `Gc` to the unit type.
-    ///
-    /// This is exactly the same as `unsafe { Gc::cast::<()>(this) }`, but we can provide this
-    /// method safely because it is always safe to dereference a `*mut ()` that has come from
-    /// casting a `*mut T`.
-    #[inline]
-    pub fn erase(this: Gc<'gc, T>) -> Gc<'gc, ()> {
-        unsafe { Gc::cast(this) }
-    }
-
     /// Retrieve a `Gc` from a raw pointer obtained from `Gc::as_ptr`
     ///
     /// # Safety
@@ -249,7 +240,7 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
     #[inline]
     pub fn write(mc: &Mutation<'gc>, gc: Self) -> &'gc Write<T> {
         unsafe {
-            mc.backward_barrier(Gc::erase(gc), None);
+            mc.backward_barrier::<_, Infallible>(gc, None);
             // SAFETY: the write barrier stays valid until the end of the current callback.
             Write::assume(gc.get_ref())
         }

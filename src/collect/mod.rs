@@ -61,10 +61,10 @@ pub unsafe trait Collect<'gc> {
 /// guarantees of [`Collect`] when using this trait.
 pub trait Trace<'gc> {
     /// Trace a [`Gc`] pointer (of any real type).
-    fn trace_gc(&mut self, gc: Gc<'gc, ()>);
+    fn trace_gc<T: ?Sized + 'gc>(&mut self, gc: Gc<'gc, T>);
 
     /// Trace a [`Weak`] pointer (of any real type).
-    fn trace_gc_weak(&mut self, gc: Weak<'gc, ()>);
+    fn trace_weak<T: ?Sized + 'gc>(&mut self, gc: Weak<'gc, T>);
 
     /// This is a convenience method that calls [`Collect::trace`] but automatically adds a
     /// [`Collect::NEEDS_TRACE`] check around it.
