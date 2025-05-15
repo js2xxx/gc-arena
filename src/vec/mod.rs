@@ -7,6 +7,8 @@ use core::{
     ptr, slice,
 };
 
+use spec_from_iter::SpecFromIter;
+
 use self::set_len_on_drop::SetLenOnDrop;
 
 use crate::{Collect, Gc, Mutation, collect::Trace, gc::Unique};
@@ -15,6 +17,7 @@ mod iter;
 mod set_len_on_drop;
 mod spec_extend;
 mod spec_from_elem;
+mod spec_from_iter;
 
 pub use self::iter::IntoIter;
 use self::{spec_extend::SpecExtend, spec_from_elem::SpecFromElem};
@@ -47,6 +50,59 @@ unsafe impl<'gc, T: 'gc + Collect<'gc>> Collect<'gc> for Vec<'gc, T> {
         cc.trace(&self.buf);
         cc.trace(self.deref());
     }
+}
+
+/// Creates a GC'd [`Vec`] containing the arguments.
+///
+/// `vec!` allows `Vec`s to be defined with the same syntax as array expressions.
+/// There are two forms of this macro:
+///
+/// - Create a [`Vec`] containing a given list of elements:
+///
+/// ```
+/// # use gc_arena::{arena::rootless_mutate, vec};
+/// # rootless_mutate(|mc| {
+/// let v = vec![mc => 1, 2, 3];
+/// assert_eq!(v[0], 1);
+/// assert_eq!(v[1], 2);
+/// assert_eq!(v[2], 3);
+/// # });
+/// ```
+///
+/// - Create a [`Vec`] from a given element and size:
+///
+/// ```
+/// # use gc_arena::{arena::rootless_mutate, vec};
+/// # rootless_mutate(|mc| {
+/// let v = vec![mc => 1; 3];
+/// assert_eq!(v, [1, 1, 1]);
+/// # });
+/// ```
+///
+/// Note that unlike array expressions this syntax supports all elements
+/// which implement [`Clone`] and the number of elements doesn't have to be
+/// a constant.
+///
+/// This will use `clone` to duplicate an expression, so one should be careful
+/// using this with types having a nonstandard `Clone` implementation. For
+/// example, `vec![Rc::new(1); 5]` will create a vector of five references
+/// to the same boxed integer value, not five references pointing to independently
+/// boxed integers.
+///
+/// Also, note that `vec![expr; 0]` is allowed, and produces an empty vector.
+/// This will still evaluate `expr`, however, and immediately drop the resulting value, so
+/// be mindful of side effects.
+///
+/// [`Vec`]: crate::vec::Vec
+#[macro_export]
+macro_rules! vec {
+    [$mc:expr] => [$crate::vec::Vec::new($mc)];
+    [$mc:expr => $elem:expr; $count:expr] => {
+        $crate::vec::Vec::from_elem($mc, $elem, $count)
+    };
+    [$mc:expr => $($elem:expr),* $(,)?] => {
+        $crate::vec::Vec::from($crate::gc::Unique::new_unsize::<[_]>($mc, [$($elem),*]))
+    };
 }
 
 impl<'gc, T: 'gc + Collect<'gc>> Vec<'gc, T> {
@@ -696,6 +752,21 @@ impl<'gc, T: 'gc + Collect<'gc> + Clone> Vec<'gc, T> {
 }
 
 impl<'gc, T: 'gc + Collect<'gc>> Vec<'gc, T> {
+    pub fn extend<I: Iterator<Item = T>>(&mut self, mc: &Mutation<'gc>, iter: I) {
+        SpecExtend::extend(self, mc, iter);
+    }
+
+    pub fn extend_ref<'a, I: Iterator<Item = &'a T>>(&mut self, mc: &Mutation<'gc>, iter: I)
+    where
+        T: Clone + 'a,
+    {
+        SpecExtend::extend(self, mc, iter);
+    }
+
+    pub fn collect<I: Iterator<Item = T>>(mc: &Mutation<'gc>, iter: I) -> Self {
+        SpecFromIter::from_iter(mc, iter)
+    }
+
     // leaf method to which various SpecFrom/SpecExtend implementations delegate when
     // they have no further optimizations to apply
     #[track_caller]
@@ -805,6 +876,20 @@ impl<'gc, T: 'gc> DerefMut for Vec<'gc, T> {
     }
 }
 
+impl<'gc, T: 'gc + PartialEq<U>, U: 'gc, const N: usize> PartialEq<[U; N]> for Vec<'gc, T> {
+    #[inline]
+    fn eq(&self, other: &[U; N]) -> bool {
+        PartialEq::eq(&**self, other)
+    }
+}
+
+impl<'gc, T: 'gc + PartialEq<U>, U: 'gc> PartialEq<[U]> for Vec<'gc, T> {
+    #[inline]
+    fn eq(&self, other: &[U]) -> bool {
+        PartialEq::eq(&**self, other)
+    }
+}
+
 impl<'gc, T: 'gc + PartialEq<U>, U: 'gc> PartialEq<Vec<'gc, U>> for Vec<'gc, T> {
     #[inline]
     fn eq(&self, other: &Vec<'gc, U>) -> bool {
@@ -877,5 +962,27 @@ impl<'gc, T: 'gc> IntoIterator for Vec<'gc, T> {
 
     fn into_iter(self) -> Self::IntoIter {
         IntoIter::from_vec(self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::arena::rootless_mutate;
+
+    #[test]
+    fn macros() {
+        rootless_mutate(|mc| {
+            let mut vec = crate::vec![mc];
+            vec.push(mc, 1);
+            vec.push(mc, 2);
+            assert_eq!(vec, [1, 2]);
+
+            let v2 = crate::vec![mc => 100; 1024];
+            assert_eq!(v2.len(), 1024);
+            assert_eq!(v2[50], 100);
+
+            let v3 = crate::vec![mc => 3, 4, 5, 6, 7];
+            assert_eq!(v3, [3, 4, 5, 6, 7]);
+        })
     }
 }

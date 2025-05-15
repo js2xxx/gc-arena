@@ -6,9 +6,9 @@ use core::{
     slice,
 };
 
-use crate::{Collect, collect::Trace, gc::Unique};
+use crate::{Collect, Mutation, collect::Trace, gc::Unique};
 
-use super::Vec;
+use super::{SpecExtend, Vec};
 
 pub struct IntoIter<'gc, T: 'gc> {
     buf: Unique<'gc, [MaybeUninit<T>]>,
@@ -29,6 +29,56 @@ unsafe impl<'gc, T: Collect<'gc> + 'gc> Collect<'gc> for IntoIter<'gc, T> {
     }
 }
 
+impl<'gc, T: 'gc + Collect<'gc>> IntoIter<'gc, T> {
+    /// Collects the remaining items of this iterator into a `Vec`.
+    ///
+    /// This method is provided because the generic [`Vec::collect`] cannot specialize on the
+    /// type of this iterator (which is branded by `'gc`).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use gc_arena::{arena::rootless_mutate, vec, vec::IntoIter};
+    /// # rootless_mutate(|mc| {
+    /// let mut iter = vec![mc => 1, 2, 3, 4, 5].into_iter();
+    /// assert_eq!(iter.next(), Some(1));
+    /// assert_eq!(iter.next(), Some(2));
+    /// assert_eq!(iter.next_back(), Some(5));
+    /// assert_eq!(iter.into_vec(mc), [3, 4]);
+    /// # });
+    pub fn into_vec(self, mc: &Mutation<'gc>) -> Vec<'gc, T> {
+        // A common case is passing a vector into a function which immediately
+        // re-collects into a vector. We can short circuit this if the IntoIter
+        // has not been advanced at all.
+        // When it has been advanced We can also reuse the memory and move the data to the front.
+        // But we only do so when the resulting Vec wouldn't have more unused capacity
+        // than creating it through the generic FromIterator implementation would. That limitation
+        // is not strictly necessary as Vec's allocation behavior is intentionally unspecified.
+        // But it is a conservative choice.
+        if self.len() >= self.capacity() / 2 {
+            let this = ManuallyDrop::new(self);
+            // SAFETY: `self.start` and `self.end` are valid
+            // pointers to the same allocation as `self.buf`.
+            return unsafe {
+                let (ptr, cap) = Unique::into_raw(ptr::read(&this.buf)).to_raw_parts();
+                let dst = ptr.cast::<T>();
+                let src = this.start.as_ptr();
+
+                if !ptr::addr_eq(src, dst) {
+                    ptr::copy(src, dst, this.len());
+                }
+                Vec::from_raw_parts(dst, this.len(), cap)
+            };
+        }
+
+        let mut vec = Vec::with_capacity(mc, self.len());
+        // must delegate to spec_extend() since extend() itself delegates
+        // to spec_from for empty Vecs
+        <Vec<T> as SpecExtend<'gc, T, _>>::extend(&mut vec, mc, self);
+        vec
+    }
+}
+
 impl<'gc, T: 'gc> IntoIter<'gc, T> {
     pub(super) fn from_vec(vec: Vec<'gc, T>) -> Self {
         let this = ManuallyDrop::new(vec);
@@ -41,19 +91,25 @@ impl<'gc, T: 'gc> IntoIter<'gc, T> {
         }
     }
 
+    /// Returns the remaining items of this iterator as a slice.
     pub fn as_slice(&self) -> &[T] {
         // SAFETY: `self.start` and `self.end` are valid
         // pointers to the same allocation as `self.buf`.
         unsafe { slice::from_raw_parts(self.start.as_ptr(), self.len()) }
     }
 
+    /// Returns the remaining items of this iterator as a mutable slice.
     pub fn as_mut_slice(&mut self) -> &mut [T] {
         // SAFETY: `self.start` and `self.end` are valid
         // pointers to the same allocation as `self.buf`.
         unsafe { slice::from_raw_parts_mut(self.start.as_ptr(), self.len()) }
     }
 
-    pub(crate) fn forget_remaining(&mut self) {
+    fn capacity(&self) -> usize {
+        self.buf.len()
+    }
+
+    pub(super) fn forget_remaining(&mut self) {
         // For the ZST case, it is crucial that we mutate `end` here, not `ptr`.
         // `ptr` must stay aligned, while `end` may be unaligned.
         self.end = self.start;
