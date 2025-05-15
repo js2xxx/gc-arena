@@ -1,6 +1,8 @@
 use core::{
     alloc::Layout,
+    any::Any,
     borrow::Borrow,
+    error::Error,
     fmt::{self, Debug, Display, Pointer},
     marker::{PhantomData, Unsize},
     mem::MaybeUninit,
@@ -400,7 +402,42 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, [MaybeUninit<T>]> {
     }
 }
 
+impl<'gc> Unique<'gc, dyn Any> {
+    pub fn downcast<T: Any>(self) -> Result<Unique<'gc, T>, Self> {
+        if self.is::<T>() {
+            // SAFETY: `self` is a `Unique<dyn Any>`, so it is valid to cast to `T`.
+            Ok(unsafe { Unique::cast(self) })
+        } else {
+            Err(self)
+        }
+    }
+}
+
+impl<'gc> Unique<'gc, dyn Error + 'static> {
+    pub fn downcast<T: Error + 'static>(self) -> Result<Unique<'gc, T>, Self> {
+        if self.is::<T>() {
+            // SAFETY: `self` is a `Unique<dyn Error>`, so it is valid to cast to `T`.
+            Ok(unsafe { Unique::cast(self) })
+        } else {
+            Err(self)
+        }
+    }
+}
+
 impl<'gc, T: ?Sized + 'gc> Unique<'gc, T> {
+    /// Cast a `Unique` GC pointer to a different type.
+    ///
+    /// # Safety
+    ///
+    /// It must be valid to dereference a `*mut U` that has come from casting a `*mut T`.
+    #[inline]
+    pub unsafe fn cast<U: 'gc>(this: Unique<'gc, T>) -> Unique<'gc, U> {
+        Unique {
+            ptr: this.ptr,
+            _invariant: PhantomData,
+        }
+    }
+
     /// Returns a raw mutable pointer to the `Unique`'s contents.
     ///
     /// Very few guarantees are given about this pointer, except that it is properly

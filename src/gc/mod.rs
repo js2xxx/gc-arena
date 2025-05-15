@@ -1,7 +1,9 @@
 use core::{
     alloc::Layout,
+    any::Any,
     borrow::Borrow,
     convert::Infallible,
+    error::Error,
     fmt::{self, Debug, Display, Pointer},
     hash::{Hash, Hasher},
     marker::{PhantomData, Unsize},
@@ -166,10 +168,33 @@ impl<'gc, T: 'static> Gc<'gc, T> {
     }
 }
 
+impl<'gc> Gc<'gc, dyn Any> {
+    pub fn downcast<T: Any>(self) -> Option<Gc<'gc, T>> {
+        if self.is::<T>() {
+            // SAFETY: `self` is a `Gc<dyn Any>`, so it is valid to cast to `T`.
+            Some(unsafe { Gc::cast(self) })
+        } else {
+            None
+        }
+    }
+}
+
+impl<'gc> Gc<'gc, dyn Error + 'static> {
+    pub fn downcast<T: Error + 'static>(self) -> Option<Gc<'gc, T>> {
+        if self.is::<T>() {
+            // SAFETY: `self` is a `Gc<dyn Error>`, so it is valid to cast to `T`.
+            Some(unsafe { Gc::cast(self) })
+        } else {
+            None
+        }
+    }
+}
+
 impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
     /// Cast a `Gc` pointer to a different type.
     ///
     /// # Safety
+    ///
     /// It must be valid to dereference a `*mut U` that has come from casting a `*mut T`.
     #[inline]
     pub unsafe fn cast<U: 'gc>(this: Gc<'gc, T>) -> Gc<'gc, U> {
