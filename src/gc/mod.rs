@@ -20,7 +20,7 @@ use crate::{
 mod unique;
 mod weak;
 
-pub use self::{unique::UniqueGc, weak::Weak};
+pub use self::{unique::Unique, weak::Weak};
 
 /// A garbage collected pointer to a type T. Implements Copy, and is implemented as a plain machine
 /// pointer. You can only allocate `Gc` pointers through a `&Mutation<'gc>` inside an arena type,
@@ -94,13 +94,13 @@ impl<'gc, T: Collect<'gc> + 'gc> Gc<'gc, T> {
     /// Create a new `Gc` pointer from a sized value.
     #[inline]
     pub fn new(mc: &Mutation<'gc>, t: T) -> Gc<'gc, T> {
-        UniqueGc::into_gc(UniqueGc::write(Self::new_uninit(mc), t))
+        Unique::into_gc(Unique::write(Self::new_uninit(mc), t))
     }
 
     /// Create a new unique `Gc` pointer from a sized value.
     #[inline]
-    pub fn unique(mc: &Mutation<'gc>, t: T) -> UniqueGc<'gc, T> {
-        UniqueGc::new(mc, t)
+    pub fn unique(mc: &Mutation<'gc>, t: T) -> Unique<'gc, T> {
+        Unique::new(mc, t)
     }
 
     pub fn new_unsize<Dyn>(mc: &Mutation<'gc>, t: T) -> Gc<'gc, Dyn>
@@ -126,26 +126,26 @@ impl<'gc, T: Collect<'gc> + 'gc> Gc<'gc, T> {
 impl<'gc, T: Collect<'gc> + 'gc> Gc<'gc, T> {
     /// Create a new uninit `Gc` pointer.
     #[inline]
-    pub fn new_uninit(mc: &Mutation<'gc>) -> UniqueGc<'gc, MaybeUninit<T>> {
-        UniqueGc::new_uninit(mc)
+    pub fn new_uninit(mc: &Mutation<'gc>) -> Unique<'gc, MaybeUninit<T>> {
+        Unique::new_uninit(mc)
     }
 
     /// Create a new zeroed `Gc` pointer.
     #[inline]
-    pub fn new_zeroed(mc: &Mutation<'gc>) -> UniqueGc<'gc, MaybeUninit<T>> {
-        UniqueGc::new_zeroed(mc)
+    pub fn new_zeroed(mc: &Mutation<'gc>) -> Unique<'gc, MaybeUninit<T>> {
+        Unique::new_zeroed(mc)
     }
 }
 
 impl<'gc, T: Collect<'gc> + 'gc> Gc<'gc, T> {
     /// Create a new uninit `Gc` pointer slice.
-    pub fn new_uninit_slice(mc: &Mutation<'gc>, len: usize) -> UniqueGc<'gc, [MaybeUninit<T>]> {
-        UniqueGc::new_uninit_slice(mc, len)
+    pub fn new_uninit_slice(mc: &Mutation<'gc>, len: usize) -> Unique<'gc, [MaybeUninit<T>]> {
+        Unique::new_uninit_slice(mc, len)
     }
 
     /// Create a new zeroed `Gc` pointer slice.
-    pub fn new_zeroed_slice(mc: &Mutation<'gc>, len: usize) -> UniqueGc<'gc, [MaybeUninit<T>]> {
-        UniqueGc::new_zeroed_slice(mc, len)
+    pub fn new_zeroed_slice(mc: &Mutation<'gc>, len: usize) -> Unique<'gc, [MaybeUninit<T>]> {
+        Unique::new_zeroed_slice(mc, len)
     }
 }
 

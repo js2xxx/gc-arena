@@ -20,35 +20,35 @@ use crate::{
 /// Unlike [`Gc`] this pointer is known to be unique,
 /// and as such allows mutation without the use of interior mutability. It does not however,
 /// implement [`Collect`], and as such is intended for the initialisation of data, before
-/// converting into a plain [`Gc`] with [`UniqueGc::into_gc`].
+/// converting into a plain [`Gc`] with [`Unique::into_gc`].
 ///
 /// [`Gc`]: crate::Gc
 /// [`Collect`]: crate::Collect
 #[repr(transparent)]
-pub struct UniqueGc<'gc, T: ?Sized + 'gc> {
+pub struct Unique<'gc, T: ?Sized + 'gc> {
     ptr: GcBox,
     _invariant: Invariant<'gc, T>,
 }
 
-impl<'gc, T: Debug + ?Sized + 'gc> Debug for UniqueGc<'gc, T> {
+impl<'gc, T: Debug + ?Sized + 'gc> Debug for Unique<'gc, T> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt::Debug::fmt(&**self, fmt)
     }
 }
 
-impl<'gc, T: ?Sized + 'gc> Pointer for UniqueGc<'gc, T> {
+impl<'gc, T: ?Sized + 'gc> Pointer for Unique<'gc, T> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Pointer::fmt(&UniqueGc::as_ptr(self), fmt)
+        fmt::Pointer::fmt(&Unique::as_ptr(self), fmt)
     }
 }
 
-impl<'gc, T: Display + ?Sized + 'gc> Display for UniqueGc<'gc, T> {
+impl<'gc, T: Display + ?Sized + 'gc> Display for Unique<'gc, T> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt::Display::fmt(&**self, fmt)
     }
 }
 
-impl<'gc, T: ?Sized + 'gc> Deref for UniqueGc<'gc, T> {
+impl<'gc, T: ?Sized + 'gc> Deref for Unique<'gc, T> {
     type Target = T;
 
     #[inline]
@@ -57,42 +57,42 @@ impl<'gc, T: ?Sized + 'gc> Deref for UniqueGc<'gc, T> {
     }
 }
 
-impl<'gc, T: ?Sized + 'gc> DerefMut for UniqueGc<'gc, T> {
+impl<'gc, T: ?Sized + 'gc> DerefMut for Unique<'gc, T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut T {
         unsafe { &mut *self.ptr.unerased_value::<T>() }
     }
 }
 
-impl<'gc, T: ?Sized + 'gc> AsRef<T> for UniqueGc<'gc, T> {
+impl<'gc, T: ?Sized + 'gc> AsRef<T> for Unique<'gc, T> {
     fn as_ref(&self) -> &T {
         self
     }
 }
 
-impl<'gc, T: ?Sized + 'gc> AsMut<T> for UniqueGc<'gc, T> {
+impl<'gc, T: ?Sized + 'gc> AsMut<T> for Unique<'gc, T> {
     fn as_mut(&mut self) -> &mut T {
         self
     }
 }
 
-impl<'gc, T: ?Sized + 'gc> Borrow<T> for UniqueGc<'gc, T> {
+impl<'gc, T: ?Sized + 'gc> Borrow<T> for Unique<'gc, T> {
     fn borrow(&self) -> &T {
         self
     }
 }
 
-impl<'gc, T: Collect<'gc> + 'gc> UniqueGc<'gc, T> {
-    /// Creates a new `UniqueGc` containing the given value.
+impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, T> {
+    /// Creates a new `Unique` containing the given value.
     ///
     /// As the allocated value is statically known not to have any other references, we can safely
     /// modify it through this pointer.
     ///
     /// # Examples
     /// ```
-    /// # use gc_arena::{arena::rootless_mutate, gc::UniqueGc};
+    /// # use gc_arena::{arena::rootless_mutate, gc::Unique};
     /// # rootless_mutate(|mc| {
-    /// let mut gc = UniqueGc::new(mc, 42i32);
+    /// let mut gc = Unique::new(mc, 42i32);
     ///
     /// assert_eq!(*gc, 42);
     /// *gc = 0;
@@ -100,19 +100,19 @@ impl<'gc, T: Collect<'gc> + 'gc> UniqueGc<'gc, T> {
     /// # });
     /// ```
     #[inline]
-    pub fn new(mc: &Mutation<'gc>, t: T) -> UniqueGc<'gc, T> {
-        UniqueGc::write(UniqueGc::new_uninit(mc), t)
+    pub fn new(mc: &Mutation<'gc>, t: T) -> Unique<'gc, T> {
+        Unique::write(Unique::new_uninit(mc), t)
     }
 }
 
-impl<'gc, T: Collect<'gc> + 'gc> UniqueGc<'gc, T> {
-    /// Creates a new `UniqueGc` with uninitialized contents.
+impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, T> {
+    /// Creates a new `Unique` with uninitialized contents.
     ///
     /// # Examples
     /// ```
-    /// # use gc_arena::{arena::rootless_mutate, gc::UniqueGc};
+    /// # use gc_arena::{arena::rootless_mutate, gc::Unique};
     /// # rootless_mutate(|mc| {
-    /// let mut gc = UniqueGc::<i32>::new_uninit(mc);
+    /// let mut gc = Unique::<i32>::new_uninit(mc);
     ///
     /// // let gc = unsafe { gc.assume_init() };
     /// //                      ^ undefined behaviour
@@ -123,20 +123,20 @@ impl<'gc, T: Collect<'gc> + 'gc> UniqueGc<'gc, T> {
     /// # })
     /// ```
     #[inline]
-    pub fn new_uninit(mc: &Mutation<'gc>) -> UniqueGc<'gc, MaybeUninit<T>> {
-        UniqueGc {
+    pub fn new_uninit(mc: &Mutation<'gc>) -> Unique<'gc, MaybeUninit<T>> {
+        Unique {
             ptr: mc.allocate::<T, false>(()),
             _invariant: PhantomData,
         }
     }
 
-    /// Creates a new `UniqueGc` with uninitialized contents, with the memory being filled with `0` bytes.
+    /// Creates a new `Unique` with uninitialized contents, with the memory being filled with `0` bytes.
     ///
     /// # Examples
     /// ```
-    /// # use gc_arena::{arena::rootless_mutate, gc::UniqueGc};
+    /// # use gc_arena::{arena::rootless_mutate, gc::Unique};
     /// # rootless_mutate(|mc| {
-    /// let gc = UniqueGc::<i32>::new_zeroed(mc);
+    /// let gc = Unique::<i32>::new_zeroed(mc);
     ///
     /// // SAFETY: It is valid to initialize an `i32` with zeroed bytes.
     /// let gc = unsafe { gc.assume_init() };
@@ -145,8 +145,8 @@ impl<'gc, T: Collect<'gc> + 'gc> UniqueGc<'gc, T> {
     /// # });
     /// ```
     #[inline]
-    pub fn new_zeroed(mc: &Mutation<'gc>) -> UniqueGc<'gc, MaybeUninit<T>> {
-        let ret = UniqueGc {
+    pub fn new_zeroed(mc: &Mutation<'gc>) -> Unique<'gc, MaybeUninit<T>> {
+        let ret = Unique {
             ptr: mc.allocate::<T, true>(()),
             _invariant: PhantomData,
         };
@@ -164,14 +164,14 @@ impl<'gc, T: Collect<'gc> + 'gc> UniqueGc<'gc, T> {
     }
 }
 
-impl<'gc, T: Collect<'gc> + 'gc> UniqueGc<'gc, [T]> {
+impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, [T]> {
     /// Constructs a new garbage-collected slice with uninitialized contents.
     ///
     /// # Examples
     /// ```
-    /// # use gc_arena::{arena::rootless_mutate, gc::UniqueGc};
+    /// # use gc_arena::{arena::rootless_mutate, gc::Unique};
     /// # rootless_mutate(|mc| {
-    /// let mut values = UniqueGc::<[i32]>::new_uninit_slice(mc, 3);
+    /// let mut values = Unique::<[i32]>::new_uninit_slice(mc, 3);
     ///
     /// let values = unsafe {
     ///     // Deferred initialization:
@@ -185,8 +185,8 @@ impl<'gc, T: Collect<'gc> + 'gc> UniqueGc<'gc, [T]> {
     /// assert_eq!(*values, [1, 2, 3]);
     /// # });
     /// ```
-    pub fn new_uninit_slice(mc: &Mutation<'gc>, len: usize) -> UniqueGc<'gc, [MaybeUninit<T>]> {
-        UniqueGc {
+    pub fn new_uninit_slice(mc: &Mutation<'gc>, len: usize) -> Unique<'gc, [MaybeUninit<T>]> {
+        Unique {
             ptr: mc.allocate::<[T], false>(len),
             _invariant: PhantomData,
         }
@@ -196,16 +196,16 @@ impl<'gc, T: Collect<'gc> + 'gc> UniqueGc<'gc, [T]> {
     ///
     /// # Examples
     /// ```
-    /// # use gc_arena::{arena::rootless_mutate, gc::UniqueGc};
+    /// # use gc_arena::{arena::rootless_mutate, gc::Unique};
     /// # rootless_mutate(|mc| {
-    /// let values = UniqueGc::<[i32]>::new_zeroed_slice(mc, 3);
+    /// let values = Unique::<[i32]>::new_zeroed_slice(mc, 3);
     /// let values = unsafe { values.assume_init() };
     ///
     /// assert_eq!(*values, [0, 0, 0]);
     /// # });
     /// ```
-    pub fn new_zeroed_slice(mc: &Mutation<'gc>, len: usize) -> UniqueGc<'gc, [MaybeUninit<T>]> {
-        let ret: UniqueGc<'gc, [MaybeUninit<T>]> = UniqueGc {
+    pub fn new_zeroed_slice(mc: &Mutation<'gc>, len: usize) -> Unique<'gc, [MaybeUninit<T>]> {
+        let ret: Unique<'gc, [MaybeUninit<T>]> = Unique {
             ptr: mc.allocate::<[T], true>(len),
             _invariant: PhantomData,
         };
@@ -221,8 +221,8 @@ impl<'gc, T: Collect<'gc> + 'gc> UniqueGc<'gc, [T]> {
     }
 }
 
-impl<'gc, T: Collect<'gc> + 'gc> UniqueGc<'gc, MaybeUninit<T>> {
-    /// Converts to `UniqueGc<'gc, T>`.
+impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, MaybeUninit<T>> {
+    /// Converts to `Unique<'gc, T>`.
     ///
     /// # Safety
     ///
@@ -232,11 +232,11 @@ impl<'gc, T: Collect<'gc> + 'gc> UniqueGc<'gc, MaybeUninit<T>> {
     ///
     /// # Examples
     /// ```
-    /// # use gc_arena::{arena::rootless_mutate, gc::UniqueGc};
+    /// # use gc_arena::{arena::rootless_mutate, gc::Unique};
     /// # rootless_mutate(|mc| {
-    /// let mut gc = UniqueGc::<i32>::new_uninit(mc);
+    /// let mut gc = Unique::<i32>::new_uninit(mc);
     ///
-    /// let gc: UniqueGc<'_, i32> = unsafe {
+    /// let gc: Unique<'_, i32> = unsafe {
     ///     gc.as_mut_ptr().write(42);
     ///
     ///     gc.assume_init()
@@ -246,26 +246,26 @@ impl<'gc, T: Collect<'gc> + 'gc> UniqueGc<'gc, MaybeUninit<T>> {
     /// # });
     /// ```
     #[inline]
-    pub unsafe fn assume_init(self) -> UniqueGc<'gc, T> {
-        UniqueGc {
+    pub unsafe fn assume_init(self) -> Unique<'gc, T> {
+        Unique {
             ptr: self.ptr,
             _invariant: PhantomData,
         }
     }
 
-    /// Writes the value and converts to `UniqueGc<'gc, T>`
+    /// Writes the value and converts to `Unique<'gc, T>`
     ///
-    /// This method converts the pointer similarly to [`UniqueGc::assume_init`]
+    /// This method converts the pointer similarly to [`Unique::assume_init`]
     /// but writes `value` into it before conversion, thus guaranteeing safety.
-    pub fn write(mut this: Self, value: T) -> UniqueGc<'gc, T> {
+    pub fn write(mut this: Self, value: T) -> Unique<'gc, T> {
         (*this).write(value);
         // SAFETY: The value is initialized by `value`.
         unsafe { Self::assume_init(this) }
     }
 }
 
-impl<'gc, T: Collect<'gc> + 'gc> UniqueGc<'gc, [MaybeUninit<T>]> {
-    /// Converts to `UniqueGc<'gc, [T]>`.
+impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, [MaybeUninit<T>]> {
+    /// Converts to `Unique<'gc, [T]>`.
     ///
     /// # Safety
     /// As with [`MaybeUninit::assume_init`], it is up to the caller to
@@ -275,9 +275,9 @@ impl<'gc, T: Collect<'gc> + 'gc> UniqueGc<'gc, [MaybeUninit<T>]> {
     ///
     /// # Examples
     /// ```
-    /// # use gc_arena::{arena::rootless_mutate, gc::UniqueGc};
+    /// # use gc_arena::{arena::rootless_mutate, gc::Unique};
     /// # rootless_mutate(|mc| {
-    /// let mut values = UniqueGc::<[i32]>::new_uninit_slice(mc, 3);
+    /// let mut values = Unique::<[i32]>::new_uninit_slice(mc, 3);
     ///
     /// let values = unsafe {
     ///     // Deferred initialization:
@@ -292,8 +292,8 @@ impl<'gc, T: Collect<'gc> + 'gc> UniqueGc<'gc, [MaybeUninit<T>]> {
     /// # });
     /// ```
     #[inline]
-    pub unsafe fn assume_init(self) -> UniqueGc<'gc, [T]> {
-        UniqueGc {
+    pub unsafe fn assume_init(self) -> Unique<'gc, [T]> {
+        Unique {
             ptr: self.ptr,
             _invariant: PhantomData,
         }
@@ -303,19 +303,19 @@ impl<'gc, T: Collect<'gc> + 'gc> UniqueGc<'gc, [MaybeUninit<T>]> {
     ///
     /// # Examples
     /// ```
-    /// # use gc_arena::{arena::rootless_mutate, gc::UniqueGc};
+    /// # use gc_arena::{arena::rootless_mutate, gc::Unique};
     /// # rootless_mutate(|mc| {
     /// use std::rc::Rc;
     ///
     /// let src = [Rc::new(1), Rc::new(2), Rc::new(3), Rc::new(4)];
     ///
-    /// let gc = UniqueGc::new_uninit_slice(mc, 2);
-    /// let gc = UniqueGc::write_clone_of_slice(gc, &src[1..3]);
+    /// let gc = Unique::new_uninit_slice(mc, 2);
+    /// let gc = Unique::write_clone_of_slice(gc, &src[1..3]);
     ///
     /// assert_eq!(src.map(|rc| Rc::strong_count(&rc)), [1, 2, 2, 1]);
     /// # });
     /// ```
-    pub fn write_clone_of_slice(mut this: Self, src: &[T]) -> UniqueGc<'gc, [T]>
+    pub fn write_clone_of_slice(mut this: Self, src: &[T]) -> Unique<'gc, [T]>
     where
         T: Clone,
     {
@@ -330,12 +330,12 @@ impl<'gc, T: Collect<'gc> + 'gc> UniqueGc<'gc, [MaybeUninit<T>]> {
     ///
     /// # Examples
     /// ```
-    /// # use gc_arena::{arena::rootless_mutate, gc::UniqueGc};
+    /// # use gc_arena::{arena::rootless_mutate, gc::Unique};
     /// # rootless_mutate(|mc| {
     /// let src = [1, 2, 3, 4];
     ///
-    /// let gc = UniqueGc::new_uninit_slice(mc, 2);
-    /// let gc = UniqueGc::write_copy_of_slice(gc, &src[1..3]);
+    /// let gc = Unique::new_uninit_slice(mc, 2);
+    /// let gc = Unique::write_copy_of_slice(gc, &src[1..3]);
     ///
     /// assert_eq!(src, [1, 2, 3, 4]);
     /// assert_eq!(*gc, [2, 3]);
@@ -343,7 +343,7 @@ impl<'gc, T: Collect<'gc> + 'gc> UniqueGc<'gc, [MaybeUninit<T>]> {
     /// ```
     ///
     /// [`write_clone_of_slice`]: Self::write_clone_of_slice
-    pub fn write_copy_of_slice(mut this: Self, src: &[T]) -> UniqueGc<'gc, [T]>
+    pub fn write_copy_of_slice(mut this: Self, src: &[T]) -> Unique<'gc, [T]>
     where
         T: Copy,
     {
@@ -353,41 +353,41 @@ impl<'gc, T: Collect<'gc> + 'gc> UniqueGc<'gc, [MaybeUninit<T>]> {
     }
 }
 
-impl<'gc, T: ?Sized + 'gc> UniqueGc<'gc, T> {
-    /// Returns a raw mutable pointer to the `UniqueGc`'s contents.
+impl<'gc, T: ?Sized + 'gc> Unique<'gc, T> {
+    /// Returns a raw mutable pointer to the `Unique`'s contents.
     ///
     /// Very few guarantees are given about this pointer, except that it is properly
     /// aligned, points to a valid instance of `T`, and may be written to.
-    pub fn as_mut_ptr(this: &mut UniqueGc<'gc, T>) -> *mut T {
-        // SAFETY: `UniqueGc` is guaranteed to contain a pointer to a valid instance of a `GcBoxInner<T>`.
+    pub fn as_mut_ptr(this: &mut Unique<'gc, T>) -> *mut T {
+        // SAFETY: `Unique` is guaranteed to contain a pointer to a valid instance of a `GcBoxInner<T>`.
         unsafe { this.ptr.unerased_value::<T>() }
     }
 
-    /// Returns a raw pointer to the `UniqueGc`'s contents.
+    /// Returns a raw pointer to the `Unique`'s contents.
     ///
     /// Very few guarantees are given about this pointer, except that it is properly
     /// aligned, and points to a valid instance of `T`
-    pub fn as_ptr(this: &UniqueGc<'gc, T>) -> *const T {
-        // SAFETY: `UniqueGc` is guaranteed to contain a pointer to a valid instance of a `GcBoxInner<T>`.
+    pub fn as_ptr(this: &Unique<'gc, T>) -> *const T {
+        // SAFETY: `Unique` is guaranteed to contain a pointer to a valid instance of a `GcBoxInner<T>`.
         unsafe { this.ptr.unerased_value::<T>() }
     }
 
-    /// Transforms the `UniqueGc` into a raw pointer.
+    /// Transforms the `Unique` into a raw pointer.
     ///
     /// The pointer is guaranteed to be valid only in the current collection phase.
-    pub fn into_raw(this: UniqueGc<'gc, T>) -> *mut T {
-        // SAFETY: `UniqueGc` is guaranteed to contain a pointer to a valid instance of a `GcBoxInner<T>`.
+    pub fn into_raw(this: Unique<'gc, T>) -> *mut T {
+        // SAFETY: `Unique` is guaranteed to contain a pointer to a valid instance of a `GcBoxInner<T>`.
         unsafe { this.ptr.unerased_value::<T>() }
     }
 
-    /// Constructs a `UniqueGc` from a raw pointer.
+    /// Constructs a `Unique` from a raw pointer.
     ///
     /// # Safety
     ///
-    /// The given pointer must have been obtained from [`UniqueGc::as_ptr`] or
+    /// The given pointer must have been obtained from [`Unique::as_ptr`] or
     /// [`Gc::as_ptr`]. There must also exist no other garbage collected pointers
-    /// which point to the same allocation. This is always the case for [`UniqueGc::as_ptr`].
-    pub unsafe fn from_raw(raw: *mut T) -> UniqueGc<'gc, T> {
+    /// which point to the same allocation. This is always the case for [`Unique::as_ptr`].
+    pub unsafe fn from_raw(raw: *mut T) -> Unique<'gc, T> {
         let layout = Layout::new::<GcBoxHeader>();
         // SAFETY: `ptr` is valid and aligned guaranteed by the caller.
         let (_, header_offset) = layout
@@ -395,23 +395,23 @@ impl<'gc, T: ?Sized + 'gc> UniqueGc<'gc, T> {
             .unwrap();
         // SAFETY: `ptr` is previously obtained from `Gc::as_ptr`, so there is always a header.
         let ptr = unsafe { raw.byte_sub(header_offset) } as *mut GcBoxInner<T>;
-        UniqueGc {
+        Unique {
             // SAFETY: `ptr` is valid and aligned guaranteed by the caller.
             ptr: unsafe { GcBox::erase(NonNull::new_unchecked(ptr)) },
             _invariant: PhantomData,
         }
     }
 
-    /// Converts the `UniqueGc` into a regular [`Gc`].
-    pub fn into_gc(this: UniqueGc<'gc, T>) -> Gc<'gc, T> {
+    /// Converts the `Unique` into a regular [`Gc`].
+    pub fn into_gc(this: Unique<'gc, T>) -> Gc<'gc, T> {
         // SAFETY: Trivial.
-        unsafe { Gc::from_ptr(UniqueGc::into_raw(this)) }
+        unsafe { Gc::from_ptr(Unique::into_raw(this)) }
     }
 }
 
-impl<'gc, T: ?Sized + 'gc> From<UniqueGc<'gc, T>> for Gc<'gc, T> {
-    fn from(value: UniqueGc<'gc, T>) -> Self {
-        UniqueGc::into_gc(value)
+impl<'gc, T: ?Sized + 'gc> From<Unique<'gc, T>> for Gc<'gc, T> {
+    fn from(value: Unique<'gc, T>) -> Self {
+        Unique::into_gc(value)
     }
 }
 
@@ -441,7 +441,7 @@ mod test {
         }
 
         rootless_mutate(|mc| {
-            UniqueGc::new(mc, DropWatcher);
+            Unique::new(mc, DropWatcher);
         });
 
         assert!(DROPPED.get());
@@ -450,7 +450,7 @@ mod test {
     #[test]
     fn unique_gc_new() {
         rootless_mutate(|mc| {
-            let mut gc = UniqueGc::new(mc, 12i32);
+            let mut gc = Unique::new(mc, 12i32);
             assert_eq!(*gc, 12);
             *gc = 42;
             assert_eq!(*gc, 42);
@@ -460,12 +460,12 @@ mod test {
     #[test]
     fn unique_gc_uninit() {
         rootless_mutate(|mc| {
-            let gc = UniqueGc::new_uninit(mc);
-            let gc1 = UniqueGc::write(gc, 0);
+            let gc = Unique::new_uninit(mc);
+            let gc1 = Unique::write(gc, 0);
             assert_eq!(*gc1, 0);
 
             // SAFETY: `i32` can be safely zero-initialized.
-            let gc2 = unsafe { UniqueGc::<i32>::new_zeroed(mc).assume_init() };
+            let gc2 = unsafe { Unique::<i32>::new_zeroed(mc).assume_init() };
             assert_eq!(*gc1, *gc2);
         });
     }
