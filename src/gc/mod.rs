@@ -94,7 +94,7 @@ impl<'gc, T: Collect<'gc> + 'gc> Gc<'gc, T> {
     /// Create a new `Gc` pointer from a sized value.
     #[inline]
     pub fn new(mc: &Mutation<'gc>, t: T) -> Gc<'gc, T> {
-        Unique::into_gc(Unique::write(Self::new_uninit(mc), t))
+        Unique::write(Self::new_uninit(mc), t).into_gc()
     }
 
     /// Create a new unique `Gc` pointer from a sized value.
@@ -109,17 +109,7 @@ impl<'gc, T: Collect<'gc> + 'gc> Gc<'gc, T> {
         Dyn: ?Sized + 'gc,
         <Dyn as Pointee>::Metadata: MetaLayout<Dyn>,
     {
-        let ptr = core::ptr::from_ref(&t) as *const Dyn;
-        let (_, metadata) = ptr.to_raw_parts();
-
-        let gc_box = mc.allocate_unsize::<T, Dyn, false>(metadata);
-        // SAFETY: `ptr` is a uninit pointer to `Dyn` which can receive a `T`.
-        unsafe { gc_box.unerased_value::<T>().write(t) };
-
-        Gc {
-            ptr: gc_box,
-            _invariant: PhantomData,
-        }
+        Unique::new_unsize::<Dyn>(mc, t).into_gc()
     }
 }
 

@@ -8,8 +8,8 @@ use rand::distributions::Distribution;
 use std::{collections::HashMap, rc::Rc};
 
 use gc_arena::{
-    Arena, Collect, DynamicRootSet, Gc, Lock, RefLock, Rootable, arena::CollectionPhase,
-    gc::Weak, metrics::Pacing, static_collect,
+    Arena, Collect, DynamicRootSet, Gc, Lock, RefLock, Rootable, arena::CollectionPhase, gc::Weak,
+    metrics::Pacing, static_collect,
 };
 
 #[test]

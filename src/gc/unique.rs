@@ -2,25 +2,23 @@ use core::{
     alloc::Layout,
     borrow::Borrow,
     fmt::{self, Debug, Display, Pointer},
-    marker::PhantomData,
+    marker::{PhantomData, Unsize},
     mem::MaybeUninit,
     ops::{Deref, DerefMut},
-    ptr::NonNull,
+    ptr::{NonNull, Pointee},
 };
 
 use crate::{
     Gc,
-    collect::Collect,
+    collect::{Collect, Trace},
     context::Mutation,
-    types::{GcBox, GcBoxHeader, GcBoxInner, Invariant},
+    types::{GcBox, GcBoxHeader, GcBoxInner, Invariant, MetaLayout},
 };
 
 /// A uniquely-owned garbage-collected pointer to a type `T`.
 ///
 /// Unlike [`Gc`] this pointer is known to be unique,
-/// and as such allows mutation without the use of interior mutability. It does not however,
-/// implement [`Collect`], and as such is intended for the initialisation of data, before
-/// converting into a plain [`Gc`] with [`Unique::into_gc`].
+/// and as such allows mutation without the use of interior mutability.
 ///
 /// [`Gc`]: crate::Gc
 /// [`Collect`]: crate::Collect
@@ -45,6 +43,17 @@ impl<'gc, T: ?Sized + 'gc> Pointer for Unique<'gc, T> {
 impl<'gc, T: Display + ?Sized + 'gc> Display for Unique<'gc, T> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt::Display::fmt(&**self, fmt)
+    }
+}
+
+unsafe impl<'gc, T: Collect<'gc> + ?Sized + 'gc> Collect<'gc> for Unique<'gc, T> {
+    const NEEDS_TRACE: bool = true;
+
+    fn trace<U: Trace<'gc>>(&self, cc: &mut U) {
+        // SAFETY: The constructed `Gc` pointer won't access the underlying value;
+        // the dropping process will not start either until the next collection phase after
+        // the current `Unique` is dropped.
+        cc.trace_gc(unsafe { Gc::from_ptr(self.ptr.unerased_value::<()>()) });
     }
 }
 
@@ -102,6 +111,26 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, T> {
     #[inline]
     pub fn new(mc: &Mutation<'gc>, t: T) -> Unique<'gc, T> {
         Unique::write(Unique::new_uninit(mc), t)
+    }
+
+    /// Creates a new `Unique` containing the given value, unsizing to a dynamically sized type.
+    pub fn new_unsize<Dyn>(mc: &Mutation<'gc>, t: T) -> Unique<'gc, Dyn>
+    where
+        T: Collect<'gc> + Unsize<Dyn>,
+        Dyn: ?Sized + 'gc,
+        <Dyn as Pointee>::Metadata: MetaLayout<Dyn>,
+    {
+        let ptr = core::ptr::from_ref(&t) as *const Dyn;
+        let (_, metadata) = ptr.to_raw_parts();
+
+        let gc_box = mc.allocate_unsize::<T, Dyn, false>(metadata);
+        // SAFETY: `ptr` is a uninit pointer to `Dyn` which can receive a `T`.
+        unsafe { gc_box.unerased_value::<T>().write(t) };
+
+        Unique {
+            ptr: gc_box,
+            _invariant: PhantomData,
+        }
     }
 }
 
@@ -403,15 +432,15 @@ impl<'gc, T: ?Sized + 'gc> Unique<'gc, T> {
     }
 
     /// Converts the `Unique` into a regular [`Gc`].
-    pub fn into_gc(this: Unique<'gc, T>) -> Gc<'gc, T> {
+    pub fn into_gc(self) -> Gc<'gc, T> {
         // SAFETY: Trivial.
-        unsafe { Gc::from_ptr(Unique::into_raw(this)) }
+        unsafe { Gc::from_ptr(Unique::into_raw(self)) }
     }
 }
 
 impl<'gc, T: ?Sized + 'gc> From<Unique<'gc, T>> for Gc<'gc, T> {
     fn from(value: Unique<'gc, T>) -> Self {
-        Unique::into_gc(value)
+        value.into_gc()
     }
 }
 
