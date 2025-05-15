@@ -1,5 +1,8 @@
-use alloc::rc::Rc;
+use ::alloc::rc::Rc;
 use core::cell::Cell;
+
+mod alloc;
+pub use self::alloc::MetricsAlloc;
 
 /// Tuning parameters for a given garbage collected [`crate::Arena`].
 ///

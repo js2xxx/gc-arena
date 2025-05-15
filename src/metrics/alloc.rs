@@ -1,16 +1,8 @@
 use std::{alloc::Layout, marker::PhantomData, ptr::NonNull};
 
-use allocator_api2::{
-    alloc::{AllocError, Allocator, Global},
-    boxed, vec,
-};
+use alloc::alloc::{AllocError, Allocator, Global};
 
-use crate::{
-    collect::{Collect, Trace},
-    context::Mutation,
-    metrics::Metrics,
-    types::Invariant,
-};
+use crate::{collect::Collect, context::Mutation, metrics::Metrics, types::Invariant};
 
 #[derive(Clone)]
 pub struct MetricsAlloc<'gc, A = Global> {
@@ -70,7 +62,7 @@ unsafe impl<'gc, A: Allocator> Allocator for MetricsAlloc<'gc, A> {
     #[inline]
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
         self.metrics.mark_external_deallocation(layout.size());
-        self.allocator.deallocate(ptr, layout);
+        unsafe { self.allocator.deallocate(ptr, layout) };
     }
 
     #[inline]
@@ -87,7 +79,7 @@ unsafe impl<'gc, A: Allocator> Allocator for MetricsAlloc<'gc, A> {
         old_layout: Layout,
         new_layout: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
-        let ptr = self.allocator.grow(ptr, old_layout, new_layout)?;
+        let ptr = unsafe { self.allocator.grow(ptr, old_layout, new_layout) }?;
         self.metrics
             .mark_external_allocation(new_layout.size() - old_layout.size());
         Ok(ptr)
@@ -100,7 +92,7 @@ unsafe impl<'gc, A: Allocator> Allocator for MetricsAlloc<'gc, A> {
         old_layout: Layout,
         new_layout: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
-        let ptr = self.allocator.grow_zeroed(ptr, old_layout, new_layout)?;
+        let ptr = unsafe { self.allocator.grow_zeroed(ptr, old_layout, new_layout) }?;
         self.metrics
             .mark_external_allocation(new_layout.size() - old_layout.size());
         Ok(ptr)
@@ -113,7 +105,7 @@ unsafe impl<'gc, A: Allocator> Allocator for MetricsAlloc<'gc, A> {
         old_layout: Layout,
         new_layout: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
-        let ptr = self.allocator.shrink(ptr, old_layout, new_layout)?;
+        let ptr = unsafe { self.allocator.shrink(ptr, old_layout, new_layout) }?;
         self.metrics
             .mark_external_deallocation(old_layout.size() - new_layout.size());
         Ok(ptr)
@@ -122,34 +114,4 @@ unsafe impl<'gc, A: Allocator> Allocator for MetricsAlloc<'gc, A> {
 
 unsafe impl<'gc, A: 'static> Collect<'gc> for MetricsAlloc<'gc, A> {
     const NEEDS_TRACE: bool = false;
-}
-
-unsafe impl<'gc> Collect<'gc> for Global {
-    const NEEDS_TRACE: bool = false;
-}
-
-unsafe impl<'gc, T, A> Collect<'gc> for boxed::Box<T, A>
-where
-    T: Collect<'gc> + ?Sized,
-    A: Collect<'gc> + Allocator,
-{
-    const NEEDS_TRACE: bool = T::NEEDS_TRACE || A::NEEDS_TRACE;
-
-    #[inline]
-    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
-        cc.trace(&**self);
-        cc.trace(boxed::Box::allocator(self));
-    }
-}
-
-unsafe impl<'gc, T: Collect<'gc>, A: Collect<'gc> + Allocator> Collect<'gc> for vec::Vec<T, A> {
-    const NEEDS_TRACE: bool = T::NEEDS_TRACE || A::NEEDS_TRACE;
-
-    #[inline]
-    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
-        for v in self {
-            cc.trace(v);
-        }
-        cc.trace(self.allocator());
-    }
 }

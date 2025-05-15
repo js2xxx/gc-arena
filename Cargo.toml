@@ -27,7 +27,6 @@ repository.workspace = true
 default = ["std"]
 std = []
 tracing = ["dep:tracing"]
-allocator-api2 = ["dep:allocator-api2", "hashbrown?/allocator-api2"]
 
 [dependencies]
 allocator-api2 = { version = "0.2", optional = true, default-features = false, features = ["alloc"] }

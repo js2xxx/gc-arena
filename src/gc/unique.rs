@@ -341,7 +341,7 @@ impl<'gc, T: Collect<'gc> + 'gc> UniqueGc<'gc, [MaybeUninit<T>]> {
     /// assert_eq!(*gc, [2, 3]);
     /// # });
     /// ```
-    /// 
+    ///
     /// [`write_clone_of_slice`]: Self::write_clone_of_slice
     pub fn write_copy_of_slice(mut this: Self, src: &[T]) -> UniqueGc<'gc, [T]>
     where

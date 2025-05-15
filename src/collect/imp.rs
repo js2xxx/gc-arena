@@ -1,8 +1,10 @@
+use alloc::alloc::Global;
 use alloc::boxed::Box;
 use alloc::collections::{BTreeMap, BTreeSet, BinaryHeap, LinkedList, VecDeque};
 use alloc::rc::Rc;
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::alloc::Allocator;
 use core::cell::{Cell, RefCell};
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
@@ -91,12 +93,21 @@ unsafe impl<'gc, T: ?Sized + 'static> Collect<'gc> for &'static T {
     const NEEDS_TRACE: bool = false;
 }
 
-unsafe impl<'gc, T: ?Sized + Collect<'gc>> Collect<'gc> for Box<T> {
-    const NEEDS_TRACE: bool = T::NEEDS_TRACE;
+unsafe impl<'gc> Collect<'gc> for Global {
+    const NEEDS_TRACE: bool = false;
+}
+
+unsafe impl<'gc, T, A> Collect<'gc> for Box<T, A>
+where
+    T: Collect<'gc> + ?Sized,
+    A: Collect<'gc> + Allocator,
+{
+    const NEEDS_TRACE: bool = T::NEEDS_TRACE || A::NEEDS_TRACE;
 
     #[inline]
     fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
-        cc.trace(&**self)
+        cc.trace(&**self);
+        cc.trace(Box::allocator(self));
     }
 }
 
@@ -132,30 +143,23 @@ unsafe impl<'gc, T: Collect<'gc>, E: Collect<'gc>> Collect<'gc> for Result<T, E>
     }
 }
 
-unsafe impl<'gc, T: Collect<'gc>> Collect<'gc> for Vec<T> {
-    const NEEDS_TRACE: bool = T::NEEDS_TRACE;
+unsafe impl<'gc, T: Collect<'gc>, A: Collect<'gc> + Allocator> Collect<'gc> for Vec<T, A> {
+    const NEEDS_TRACE: bool = T::NEEDS_TRACE || A::NEEDS_TRACE;
 
     #[inline]
     fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
-        self.iter().for_each(|t| cc.trace(t));
+        self.iter().for_each(|v| cc.trace(v));
+        cc.trace(self.allocator());
     }
 }
 
-unsafe impl<'gc, T: Collect<'gc>> Collect<'gc> for VecDeque<T> {
-    const NEEDS_TRACE: bool = T::NEEDS_TRACE;
+unsafe impl<'gc, T: Collect<'gc>, A: Collect<'gc> + Allocator> Collect<'gc> for VecDeque<T, A> {
+    const NEEDS_TRACE: bool = T::NEEDS_TRACE || A::NEEDS_TRACE;
 
     #[inline]
     fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
         self.iter().for_each(|t| cc.trace(t));
-    }
-}
-
-unsafe impl<'gc, T: Collect<'gc>> Collect<'gc> for LinkedList<T> {
-    const NEEDS_TRACE: bool = T::NEEDS_TRACE;
-
-    #[inline]
-    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
-        self.iter().for_each(|t| cc.trace(t));
+        cc.trace(self.allocator());
     }
 }
 
@@ -191,6 +195,27 @@ where
     }
 }
 
+unsafe impl<'gc, T: Collect<'gc>, A: Collect<'gc> + Allocator> Collect<'gc> for BinaryHeap<T, A> {
+    const NEEDS_TRACE: bool = T::NEEDS_TRACE || A::NEEDS_TRACE;
+
+    #[inline]
+    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
+        self.iter().for_each(|v| cc.trace(v));
+        cc.trace(self.allocator());
+    }
+}
+
+// FIXME: Add allocator tracing for `alloc::collections::*` once their APIs are exposed.
+
+unsafe impl<'gc, T: Collect<'gc>> Collect<'gc> for LinkedList<T> {
+    const NEEDS_TRACE: bool = T::NEEDS_TRACE;
+
+    #[inline]
+    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
+        self.iter().for_each(|t| cc.trace(t));
+    }
+}
+
 unsafe impl<'gc, K, V> Collect<'gc> for BTreeMap<K, V>
 where
     K: Collect<'gc>,
@@ -219,54 +244,34 @@ where
     }
 }
 
-unsafe impl<'gc, T> Collect<'gc> for BinaryHeap<T>
-where
-    T: Collect<'gc>,
-{
-    const NEEDS_TRACE: bool = T::NEEDS_TRACE;
-
-    #[inline]
-    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
-        self.iter().for_each(|v| cc.trace(v));
-    }
-}
-
-unsafe impl<'gc, T> Collect<'gc> for Rc<T>
-where
-    T: ?Sized + Collect<'gc>,
-{
-    const NEEDS_TRACE: bool = T::NEEDS_TRACE;
+unsafe impl<'gc, T: ?Sized + Collect<'gc>, A: Collect<'gc> + Allocator> Collect<'gc> for Rc<T, A> {
+    const NEEDS_TRACE: bool = T::NEEDS_TRACE || A::NEEDS_TRACE;
 
     #[inline]
     fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
         cc.trace(&**self);
+        cc.trace(Rc::allocator(self));
     }
 }
 
 #[cfg(target_has_atomic = "ptr")]
-unsafe impl<'gc, T> Collect<'gc> for alloc::sync::Arc<T>
-where
-    T: ?Sized + Collect<'gc>,
+unsafe impl<'gc, T: ?Sized + Collect<'gc>, A: Collect<'gc> + Allocator> Collect<'gc>
+    for alloc::sync::Arc<T, A>
 {
-    const NEEDS_TRACE: bool = T::NEEDS_TRACE;
+    const NEEDS_TRACE: bool = T::NEEDS_TRACE || A::NEEDS_TRACE;
 
     #[inline]
     fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
         cc.trace(&**self);
+        cc.trace(alloc::sync::Arc::allocator(self))
     }
 }
 
-unsafe impl<'gc, T> Collect<'gc> for Cell<T>
-where
-    T: 'static,
-{
+unsafe impl<'gc, T: 'static> Collect<'gc> for Cell<T> {
     const NEEDS_TRACE: bool = false;
 }
 
-unsafe impl<'gc, T> Collect<'gc> for RefCell<T>
-where
-    T: 'static,
-{
+unsafe impl<'gc, T: 'static> Collect<'gc> for RefCell<T> {
     const NEEDS_TRACE: bool = false;
 }
 

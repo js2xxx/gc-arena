@@ -1,4 +1,5 @@
 #![no_std]
+#![feature(allocator_api)]
 #![feature(layout_for_ptr)]
 #![feature(maybe_uninit_write_slice)]
 #![feature(ptr_metadata)]
@@ -20,9 +21,6 @@ pub mod lock;
 pub mod metrics;
 mod no_drop;
 mod types;
-
-#[cfg(feature = "allocator-api2")]
-pub mod allocator_api;
 
 #[cfg(feature = "hashbrown")]
 mod hashbrown;
