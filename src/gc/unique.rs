@@ -90,7 +90,7 @@ impl<'gc, T: Collect<'gc> + 'gc> UniqueGc<'gc, T> {
     ///
     /// # Examples
     /// ```
-    /// # use gc_arena::{arena::rootless_mutate, UniqueGc};
+    /// # use gc_arena::{arena::rootless_mutate, gc::UniqueGc};
     /// # rootless_mutate(|mc| {
     /// let mut gc = UniqueGc::new(mc, 42i32);
     ///
@@ -110,7 +110,7 @@ impl<'gc, T: Collect<'gc> + 'gc> UniqueGc<'gc, T> {
     ///
     /// # Examples
     /// ```
-    /// # use gc_arena::{arena::rootless_mutate, UniqueGc};
+    /// # use gc_arena::{arena::rootless_mutate, gc::UniqueGc};
     /// # rootless_mutate(|mc| {
     /// let mut gc = UniqueGc::<i32>::new_uninit(mc);
     ///
@@ -134,7 +134,7 @@ impl<'gc, T: Collect<'gc> + 'gc> UniqueGc<'gc, T> {
     ///
     /// # Examples
     /// ```
-    /// # use gc_arena::{arena::rootless_mutate, UniqueGc};
+    /// # use gc_arena::{arena::rootless_mutate, gc::UniqueGc};
     /// # rootless_mutate(|mc| {
     /// let gc = UniqueGc::<i32>::new_zeroed(mc);
     ///
@@ -169,7 +169,7 @@ impl<'gc, T: Collect<'gc> + 'gc> UniqueGc<'gc, [T]> {
     ///
     /// # Examples
     /// ```
-    /// # use gc_arena::{arena::rootless_mutate, UniqueGc};
+    /// # use gc_arena::{arena::rootless_mutate, gc::UniqueGc};
     /// # rootless_mutate(|mc| {
     /// let mut values = UniqueGc::<[i32]>::new_uninit_slice(mc, 3);
     ///
@@ -196,7 +196,7 @@ impl<'gc, T: Collect<'gc> + 'gc> UniqueGc<'gc, [T]> {
     ///
     /// # Examples
     /// ```
-    /// # use gc_arena::{arena::rootless_mutate, UniqueGc};
+    /// # use gc_arena::{arena::rootless_mutate, gc::UniqueGc};
     /// # rootless_mutate(|mc| {
     /// let values = UniqueGc::<[i32]>::new_zeroed_slice(mc, 3);
     /// let values = unsafe { values.assume_init() };
@@ -232,7 +232,7 @@ impl<'gc, T: Collect<'gc> + 'gc> UniqueGc<'gc, MaybeUninit<T>> {
     ///
     /// # Examples
     /// ```
-    /// # use gc_arena::{arena::rootless_mutate, UniqueGc};
+    /// # use gc_arena::{arena::rootless_mutate, gc::UniqueGc};
     /// # rootless_mutate(|mc| {
     /// let mut gc = UniqueGc::<i32>::new_uninit(mc);
     ///
@@ -275,7 +275,7 @@ impl<'gc, T: Collect<'gc> + 'gc> UniqueGc<'gc, [MaybeUninit<T>]> {
     ///
     /// # Examples
     /// ```
-    /// # use gc_arena::{arena::rootless_mutate, UniqueGc};
+    /// # use gc_arena::{arena::rootless_mutate, gc::UniqueGc};
     /// # rootless_mutate(|mc| {
     /// let mut values = UniqueGc::<[i32]>::new_uninit_slice(mc, 3);
     ///
@@ -303,7 +303,7 @@ impl<'gc, T: Collect<'gc> + 'gc> UniqueGc<'gc, [MaybeUninit<T>]> {
     ///
     /// # Examples
     /// ```
-    /// # use gc_arena::{arena::rootless_mutate, UniqueGc};
+    /// # use gc_arena::{arena::rootless_mutate, gc::UniqueGc};
     /// # rootless_mutate(|mc| {
     /// use std::rc::Rc;
     ///
@@ -326,11 +326,11 @@ impl<'gc, T: Collect<'gc> + 'gc> UniqueGc<'gc, [MaybeUninit<T>]> {
 
     /// Constructs a new garbage-collected slice, copying each element from the given slice.
     ///
-    /// If `T` does not implement `Copy`, use [`clone_from_slice`].
+    /// If `T` does not implement `Copy`, use [`write_clone_of_slice`].
     ///
     /// # Examples
     /// ```
-    /// # use gc_arena::{arena::rootless_mutate, UniqueGc};
+    /// # use gc_arena::{arena::rootless_mutate, gc::UniqueGc};
     /// # rootless_mutate(|mc| {
     /// let src = [1, 2, 3, 4];
     ///
@@ -341,6 +341,8 @@ impl<'gc, T: Collect<'gc> + 'gc> UniqueGc<'gc, [MaybeUninit<T>]> {
     /// assert_eq!(*gc, [2, 3]);
     /// # });
     /// ```
+    /// 
+    /// [`write_clone_of_slice`]: Self::write_clone_of_slice
     pub fn write_copy_of_slice(mut this: Self, src: &[T]) -> UniqueGc<'gc, [T]>
     where
         T: Copy,

@@ -9,8 +9,8 @@ use core::{
 };
 
 use crate::{
-    Gc, GcWeak,
     collect::{Collect, Trace},
+    gc::{Gc, GcWeak},
     metrics::Metrics,
     types::{GcBox, GcBoxHeader, GcBoxInner, GcColor, Invariant, MetaLayout},
 };

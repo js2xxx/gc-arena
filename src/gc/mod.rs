@@ -10,14 +10,18 @@ use core::{
 };
 
 use crate::{
-    Finalization, UniqueGc,
+    Finalization,
     barrier::{Unlock, Write},
     collect::{Collect, Trace},
     context::Mutation,
-    gc_weak::GcWeak,
     static_collect::Static,
     types::{GcBox, GcBoxHeader, GcBoxInner, GcColor, Invariant, MetaLayout},
 };
+
+mod unique;
+mod weak;
+
+pub use self::{unique::UniqueGc, weak::GcWeak};
 
 /// A garbage collected pointer to a type T. Implements Copy, and is implemented as a plain machine
 /// pointer. You can only allocate `Gc` pointers through a `&Mutation<'gc>` inside an arena type,

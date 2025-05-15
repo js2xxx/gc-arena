@@ -1,4 +1,4 @@
-use crate::{Gc, GcWeak};
+use crate::gc::{Gc, GcWeak};
 
 pub use gc_arena_derive::Collect;
 
