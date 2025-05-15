@@ -309,7 +309,14 @@ pub(crate) struct CollectVTable {
 
 impl PartialEq for CollectVTable {
     fn eq(&self, other: &Self) -> bool {
-        ptr::eq(self, other)
+        // VTable instantiation in miri is not unique per type, so we can't
+        // assert the equality of their addresses in miri.
+        #[cfg(not(miri))]
+        return ptr::eq(self, other);
+        #[cfg(miri)]
+        return ptr::fn_addr_eq(self.box_layout, other.box_layout)
+            && ptr::fn_addr_eq(self.drop_value, other.drop_value)
+            && ptr::fn_addr_eq(self.trace_value, other.trace_value);
     }
 }
 
