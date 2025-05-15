@@ -18,8 +18,20 @@ where
     }
 }
 
-// TODO: Specialize on vec::IntoIter.
+// The differed `'gc` and `'gc1` can cause use-after-free bugs since:
 //
+// - If `T` contains a GC'd pointer, then the GC'd pointer only implements
+//   `Collect<'gc>` because of invariance, so it can only be collected in the
+//   arena branded by `'gc` and cannot be placed into `IntoIter<'gc1, T>`,
+//   which is fine;
+//
+// - However, if `T` doesn't contain any non-GC'd pointer, then it can be
+//   collected in any arena, but `IntoIter<'gc1, T>` still cannot. Since
+//   rustc's specialization RFC doesn't support specializing on lifetimes, we
+//   cannot implement it soundly transferring the buffer into the new vec.
+//
+// TODO(?): Find another way to implement it.
+
 // impl<'gc, T> SpecFromIter<'gc, T, super::IntoIter<'gc, T>> for Vec<'gc, T>
 // where
 //     T: Collect<'gc> + 'gc,
