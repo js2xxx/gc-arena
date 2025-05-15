@@ -2,7 +2,7 @@ use core::alloc::{Layout, LayoutError};
 use core::cell::Cell;
 use core::marker::{PhantomData, Unsize};
 use core::ptr::{DynMetadata, NonNull, Pointee};
-use core::{mem, ptr};
+use core::{fmt, mem, ptr};
 
 use crate::{collect::Collect, context::Context};
 
@@ -136,66 +136,96 @@ pub(crate) struct GcBoxHeader {
     /// - bits 0 & 1 for the current `GcColor`;
     /// - bit 2 for the `needs_trace` flag;
     /// - bit 3 for the `is_live` flag.
-    tagged_vtable: Cell<*const CollectVtable>,
+    tagged_vtable: Cell<*const CollectVTable>,
+}
+
+// Helper trait to materialize vtables in static memory.
+trait HasCollectVTable {
+    const VTABLE: CollectVTable;
+}
+
+impl<'gc, T> HasCollectVTable for T
+where
+    T: Collect<'gc> + ?Sized,
+    <T as Pointee>::Metadata: MetaLayout<T>,
+{
+    const VTABLE: CollectVTable = CollectVTable::new::<T>();
+}
+
+// Helper trait to materialize vtables in static memory.
+trait HasCollectVTableUnsize<U: ?Sized> {
+    const VTABLE: CollectVTable;
+}
+
+impl<'gc, T, U> HasCollectVTableUnsize<U> for T
+where
+    T: Collect<'gc> + Unsize<U> + ?Sized,
+    U: ?Sized,
+    <U as Pointee>::Metadata: MetaLayout<U>,
+{
+    const VTABLE: CollectVTable = CollectVTable::new_unsize::<T, U>();
 }
 
 impl GcBoxHeader {
-    #[inline(always)]
-    pub fn new<'gc, T>() -> Self
+    pub const fn new<'gc, T>() -> Self
     where
         T: Collect<'gc> + ?Sized,
         <T as Pointee>::Metadata: MetaLayout<T>,
     {
-        // Helper trait to materialize vtables in static memory.
-        trait HasCollectVtable {
-            const VTABLE: CollectVtable;
-        }
-
-        impl<'gc, T> HasCollectVtable for T
-        where
-            T: Collect<'gc> + ?Sized,
-            <T as Pointee>::Metadata: MetaLayout<T>,
-        {
-            const VTABLE: CollectVtable = CollectVtable::new::<T>();
-        }
-        let vtable: &'static _ = &<T as HasCollectVtable>::VTABLE;
+        let vtable: &'static _ = &<T as HasCollectVTable>::VTABLE;
         Self {
             next: Cell::new(None),
-            tagged_vtable: Cell::new(vtable as *const _),
+            tagged_vtable: Cell::new(ptr::from_ref(vtable)),
         }
     }
-
-    #[inline(always)]
-    pub fn new_unsize<'gc, T, U>() -> Self
+    pub const fn new_unsize<'gc, T, U>() -> Self
     where
         T: Collect<'gc> + Unsize<U> + ?Sized,
         U: ?Sized,
         <U as Pointee>::Metadata: MetaLayout<U>,
     {
-        // Helper trait to materialize vtables in static memory.
-        trait HasCollectVtable<U: ?Sized> {
-            const VTABLE: CollectVtable;
-        }
-
-        impl<'gc, T, U> HasCollectVtable<U> for T
-        where
-            T: Collect<'gc> + Unsize<U> + ?Sized,
-            U: ?Sized,
-            <U as Pointee>::Metadata: MetaLayout<U>,
-        {
-            const VTABLE: CollectVtable = CollectVtable::new_unsize::<T, U>();
-        }
-
-        let vtable: &'static _ = &<T as HasCollectVtable<U>>::VTABLE;
+        let vtable: &'static _ = &<T as HasCollectVTableUnsize<U>>::VTABLE;
         Self {
             next: Cell::new(None),
-            tagged_vtable: Cell::new(vtable as *const _),
+            tagged_vtable: Cell::new(ptr::from_ref(vtable)),
         }
     }
 
-    /// Gets a reference to the `CollectVtable` used by this box.
+    /// # Safety
+    ///
+    /// `T` must conform to the type that was used with `new`.
+    pub unsafe fn reset_vtable<'gc, T>(&self)
+    where
+        T: Collect<'gc> + ?Sized,
+        <T as Pointee>::Metadata: MetaLayout<T>,
+    {
+        let vtable: &'static _ = &<T as HasCollectVTable>::VTABLE;
+        let tags = tagged_ptr::get::<0xf, _>(self.tagged_vtable.get());
+        self.tagged_vtable
+            .set(ptr::from_ref(vtable).map_addr(|addr| addr | tags));
+        self.set_needs_trace(T::NEEDS_TRACE);
+    }
+
+    /// # Safety
+    ///
+    /// `T` and `U` must conform to the type that was used with `new`.
+    #[expect(unused)]
+    pub unsafe fn reset_vtable_unsize<'gc, T, U>(&self)
+    where
+        T: Collect<'gc> + Unsize<U> + ?Sized,
+        U: ?Sized,
+        <U as Pointee>::Metadata: MetaLayout<U>,
+    {
+        let vtable: &'static _ = &<T as HasCollectVTableUnsize<U>>::VTABLE;
+        let tags = tagged_ptr::get::<0xf, _>(self.tagged_vtable.get());
+        self.tagged_vtable
+            .set(ptr::from_ref(vtable).map_addr(|addr| addr | tags));
+        self.set_needs_trace(T::NEEDS_TRACE);
+    }
+
+    /// Gets a reference to the `CollectVTable` used by this box.
     #[inline(always)]
-    fn vtable(&self) -> &'static CollectVtable {
+    pub(crate) fn vtable(&self) -> &'static CollectVTable {
         let ptr = tagged_ptr::untag(self.tagged_vtable.get());
         // SAFETY:
         // - the pointer was properly untagged.
@@ -269,7 +299,7 @@ impl GcBoxHeader {
 /// We use a custom vtable instead of `dyn Collect` for extra flexibility.
 /// The type is over-aligned so that `GcBoxHeader` can store flags into the LSBs of the vtable pointer.
 #[repr(align(16))]
-struct CollectVtable {
+pub(crate) struct CollectVTable {
     box_layout: unsafe fn(GcBox) -> (Layout, usize),
     /// Drops the value stored in the given `GcBox` (without deallocating the box).
     drop_value: unsafe fn(GcBox),
@@ -277,7 +307,19 @@ struct CollectVtable {
     trace_value: unsafe fn(GcBox, &mut Context),
 }
 
-impl CollectVtable {
+impl PartialEq for CollectVTable {
+    fn eq(&self, other: &Self) -> bool {
+        ptr::eq(self, other)
+    }
+}
+
+impl fmt::Debug for CollectVTable {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "CollectVTable({self:p})")
+    }
+}
+
+impl CollectVTable {
     /// Makes a vtable for a known type.
     #[inline(always)]
     const fn new<'gc, T>() -> Self

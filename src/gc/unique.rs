@@ -111,7 +111,20 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, T> {
     /// ```
     #[inline]
     pub fn new(mc: &Mutation<'gc>, t: T) -> Unique<'gc, T> {
-        Unique::write(Unique::new_uninit(mc), t)
+        // The following code is equivalent to:
+        //
+        //     Unique::write(Unique::new_uninit(mc), t)
+        //
+        // The shorthand is used here to avoid an extra assignment to
+        // the underlying VTable.
+
+        let ptr = mc.allocate::<T, false>(());
+        // SAFETY: `ptr` is a valid uninit pointer to `T`.
+        unsafe { ptr.unerased_value::<T>().write(t) };
+        Unique {
+            ptr,
+            _invariant: PhantomData,
+        }
     }
 
     /// Creates a new `Unique` containing the given value, unsizing to a dynamically sized type.
@@ -155,7 +168,7 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, T> {
     #[inline]
     pub fn new_uninit(mc: &Mutation<'gc>) -> Unique<'gc, MaybeUninit<T>> {
         Unique {
-            ptr: mc.allocate::<T, false>(()),
+            ptr: mc.allocate::<MaybeUninit<T>, false>(()),
             _invariant: PhantomData,
         }
     }
@@ -177,7 +190,7 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, T> {
     #[inline]
     pub fn new_zeroed(mc: &Mutation<'gc>) -> Unique<'gc, MaybeUninit<T>> {
         let ret = Unique {
-            ptr: mc.allocate::<T, true>(()),
+            ptr: mc.allocate::<MaybeUninit<T>, true>(()),
             _invariant: PhantomData,
         };
         #[cfg(not(miri))]
@@ -217,7 +230,7 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, [T]> {
     /// ```
     pub fn new_uninit_slice(mc: &Mutation<'gc>, len: usize) -> Unique<'gc, [MaybeUninit<T>]> {
         Unique {
-            ptr: mc.allocate::<[T], false>(len),
+            ptr: mc.allocate::<[MaybeUninit<T>], false>(len),
             _invariant: PhantomData,
         }
     }
@@ -236,7 +249,7 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, [T]> {
     /// ```
     pub fn new_zeroed_slice(mc: &Mutation<'gc>, len: usize) -> Unique<'gc, [MaybeUninit<T>]> {
         let ret: Unique<'gc, [MaybeUninit<T>]> = Unique {
-            ptr: mc.allocate::<[T], true>(len),
+            ptr: mc.allocate::<[MaybeUninit<T>], true>(len),
             _invariant: PhantomData,
         };
         #[cfg(not(miri))]
@@ -277,6 +290,8 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, MaybeUninit<T>> {
     /// ```
     #[inline]
     pub unsafe fn assume_init(self) -> Unique<'gc, T> {
+        // SAFETY: The caller guarantees that the value is initialized.
+        unsafe { self.ptr.header().reset_vtable::<T>() };
         Unique {
             ptr: self.ptr,
             _invariant: PhantomData,
@@ -323,6 +338,8 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, [MaybeUninit<T>]> {
     /// ```
     #[inline]
     pub unsafe fn assume_init(self) -> Unique<'gc, [T]> {
+        // SAFETY: The caller guarantees that the slice is initialized.
+        unsafe { self.ptr.header().reset_vtable::<[T]>() };
         Unique {
             ptr: self.ptr,
             _invariant: PhantomData,
@@ -441,6 +458,10 @@ impl<'gc, T: ?Sized + 'gc> Unique<'gc, T> {
 
 impl<'gc, T: 'gc> Unique<'gc, [T]> {
     pub fn into_vec(self) -> Vec<'gc, T> {
+        // SAFETY: the elements is handled separately in `Vec`s, so
+        // assign the VTable to uninitalized states.
+        unsafe { self.ptr.header().reset_vtable::<[MaybeUninit<T>]>() };
+
         let (ptr, len) = Self::into_raw(self).to_raw_parts();
         // SAFETY: `ptr` is valid and aligned guaranteed by the caller.
         unsafe { Vec::from_raw_parts(ptr.cast(), len, len) }
@@ -455,6 +476,8 @@ impl<'gc, T: ?Sized + 'gc> From<Unique<'gc, T>> for Gc<'gc, T> {
 
 #[cfg(test)]
 mod test {
+    use std::string::ToString;
+
     use super::*;
     use crate::{Collect, arena::rootless_mutate};
 
@@ -462,14 +485,14 @@ mod test {
     fn unique_gc_drops() {
         use std::{cell::Cell, thread_local};
         thread_local! {
-            static DROPPED: Cell<bool> = const { Cell::new(false) };
+            static DROPPED: Cell<usize> = const { Cell::new(0) };
         }
 
         struct DropWatcher;
 
         impl Drop for DropWatcher {
             fn drop(&mut self) {
-                DROPPED.set(true);
+                DROPPED.set(DROPPED.get() + 1);
             }
         }
 
@@ -480,18 +503,27 @@ mod test {
 
         rootless_mutate(|mc| {
             Unique::new(mc, DropWatcher);
+            Unique::write(Unique::new_uninit(mc), DropWatcher);
+            Unique::<DropWatcher>::new_uninit(mc);
         });
 
-        assert!(DROPPED.get());
+        assert_eq!(DROPPED.get(), 2);
     }
 
     #[test]
     fn unique_gc_new() {
         rootless_mutate(|mc| {
-            let mut gc = Unique::new(mc, 12i32);
-            assert_eq!(*gc, 12);
-            *gc = 42;
-            assert_eq!(*gc, 42);
+            let mut gc = Unique::new(mc, "hello".to_string());
+            assert_eq!(*gc, "hello");
+            *gc = "world".to_string();
+            assert_eq!(*gc, "world");
+
+            let mut uninit = Unique::write(Unique::new_uninit(mc), "hello".to_string());
+            assert_eq!(*uninit, "hello");
+            *uninit = "world".to_string();
+            assert_eq!(*uninit, "world");
+
+            assert_eq!(gc.ptr.header().vtable(), uninit.ptr.header().vtable());
         });
     }
 

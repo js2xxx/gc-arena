@@ -967,6 +967,8 @@ impl<'gc, T: 'gc> IntoIterator for Vec<'gc, T> {
 
 #[cfg(test)]
 mod tests {
+    use std::string::ToString;
+
     use crate::arena::rootless_mutate;
 
     #[test]
@@ -977,9 +979,9 @@ mod tests {
             vec.push(mc, 2);
             assert_eq!(vec, [1, 2]);
 
-            let v2 = crate::vec![mc => 100; 1024];
+            let v2 = crate::vec![mc => "Hello".to_string(); 1024];
             assert_eq!(v2.len(), 1024);
-            assert_eq!(v2[50], 100);
+            assert_eq!(v2[50], "Hello");
 
             let v3 = crate::vec![mc => 3, 4, 5, 6, 7];
             assert_eq!(v3, [3, 4, 5, 6, 7]);

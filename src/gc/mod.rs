@@ -94,7 +94,7 @@ impl<'gc, T: Collect<'gc> + 'gc> Gc<'gc, T> {
     /// Create a new `Gc` pointer from a sized value.
     #[inline]
     pub fn new(mc: &Mutation<'gc>, t: T) -> Gc<'gc, T> {
-        Unique::write(Self::new_uninit(mc), t).into_gc()
+        Unique::new(mc, t).into_gc()
     }
 
     /// Create a new unique `Gc` pointer from a sized value.
