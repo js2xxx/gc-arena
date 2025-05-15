@@ -10,7 +10,7 @@ use core::{
 
 use crate::{
     collect::{Collect, Trace},
-    gc::{Gc, GcWeak},
+    gc::{Gc, Weak},
     metrics::Metrics,
     types::{GcBox, GcBoxHeader, GcBoxInner, GcColor, Invariant, MetaLayout},
 };
@@ -46,9 +46,9 @@ impl<'gc> Mutation<'gc> {
             .backward_barrier(parent.ptr, child.map(|p| p.ptr))
     }
 
-    /// A version of [`Mutation::backward_barrier`] that allows adopting a [`GcWeak`] child.
+    /// A version of [`Mutation::backward_barrier`] that allows adopting a [`Weak`] child.
     #[inline]
-    pub fn backward_barrier_weak(&self, parent: Gc<'gc, ()>, child: GcWeak<'gc, ()>) {
+    pub fn backward_barrier_weak(&self, parent: Gc<'gc, ()>, child: Weak<'gc, ()>) {
         self.context
             .backward_barrier_weak(parent.ptr, child.inner.ptr)
     }
@@ -71,9 +71,9 @@ impl<'gc> Mutation<'gc> {
             .forward_barrier(parent.map(|p| p.ptr), child.ptr)
     }
 
-    /// A version of [`Mutation::forward_barrier`] that allows adopting a [`GcWeak`] child.
+    /// A version of [`Mutation::forward_barrier`] that allows adopting a [`Weak`] child.
     #[inline]
-    pub fn forward_barrier_weak(&self, parent: Option<Gc<'gc, ()>>, child: GcWeak<'gc, ()>) {
+    pub fn forward_barrier_weak(&self, parent: Option<Gc<'gc, ()>>, child: Weak<'gc, ()>) {
         self.context
             .forward_barrier_weak(parent.map(|p| p.ptr), child.inner.ptr)
     }
@@ -140,7 +140,7 @@ impl<'gc> Trace<'gc> for Context {
         Context::trace(self, gc.ptr)
     }
 
-    fn trace_gc_weak(&mut self, gc: GcWeak<'gc, ()>) {
+    fn trace_gc_weak(&mut self, gc: Weak<'gc, ()>) {
         Context::trace_weak(self, gc.inner.ptr)
     }
 }
@@ -594,17 +594,17 @@ impl Context {
         //
         // * In `Phase::Sweep`:
         //   If the allocation is `WhiteWeak`, then it's impossible for it to have been freshly-
-        //   created during this `Phase::Sweep`. `WhiteWeak` is only  set when a white `GcWeak/
-        //   GcWeakCell` is traced. A `GcWeak/GcWeakCell` must be created from an existing `Gc/
-        //   GcCell` via `downgrade()`, so `WhiteWeak` means that a `GcWeak` / `GcWeakCell` existed
+        //   created during this `Phase::Sweep`. `WhiteWeak` is only  set when a white `Weak/
+        //   WeakCell` is traced. A `Weak/WeakCell` must be created from an existing `Gc/
+        //   GcCell` via `downgrade()`, so `WhiteWeak` means that a `Weak` / `WeakCell` existed
         //   during the last `Phase::Mark.`
         //
         //   Therefore, a `WhiteWeak` object is guaranteed to be deallocated during this
         //   `Phase::Sweep`, and we must not upgrade it.
         //
         //   Conversely, it's always safe to upgrade a white object that is not `WhiteWeak`.
-        //   In order to call `upgrade`, you must have a `GcWeak/GcWeakCell`. Since it is
-        //   not `WhiteWeak` there cannot have been any `GcWeak/GcWeakCell`s during the
+        //   In order to call `upgrade`, you must have a `Weak/WeakCell`. Since it is
+        //   not `WhiteWeak` there cannot have been any `Weak/WeakCell`s during the
         //   last `Phase::Mark`, so the weak pointer must have been created during this
         //   `Phase::Sweep`. This is only possible if the underlying allocation was freshly-created
         //   - if the allocation existed during `Phase::Mark` but was not traced, then it
@@ -711,7 +711,7 @@ impl Context {
                     self.all.set(next_box);
                 }
 
-                // SAFETY: this object is white, and wasn't traced by a `GcWeak` during this cycle,
+                // SAFETY: this object is white, and wasn't traced by a `Weak` during this cycle,
                 // meaning it cannot have either strong or weak pointers, so we can drop the whole
                 // object.
                 unsafe {

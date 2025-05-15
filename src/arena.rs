@@ -368,7 +368,7 @@ where
 {
     /// Examine the state of a fully marked arena.
     ///
-    /// Allows you to determine whether `GcWeak` pointers are "dead" (aka, soon-to-be-dropped) and
+    /// Allows you to determine whether `Weak` pointers are "dead" (aka, soon-to-be-dropped) and
     /// potentially resurrect them for this cycle.
     ///
     /// Note that the arena is guaranteed to be *fully marked* only at the *beginning* of this

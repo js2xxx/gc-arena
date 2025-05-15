@@ -409,6 +409,12 @@ impl<'gc, T: ?Sized + 'gc> UniqueGc<'gc, T> {
     }
 }
 
+impl<'gc, T: ?Sized + 'gc> From<UniqueGc<'gc, T>> for Gc<'gc, T> {
+    fn from(value: UniqueGc<'gc, T>) -> Self {
+        UniqueGc::into_gc(value)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;

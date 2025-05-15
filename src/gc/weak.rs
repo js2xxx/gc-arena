@@ -6,51 +6,51 @@ use crate::gc::Gc;
 use core::fmt::{self, Debug};
 
 #[repr(transparent)]
-pub struct GcWeak<'gc, T: ?Sized + 'gc> {
+pub struct Weak<'gc, T: ?Sized + 'gc> {
     pub(crate) inner: Gc<'gc, T>,
 }
 
-impl<'gc, T: ?Sized + 'gc> Copy for GcWeak<'gc, T> {}
+impl<'gc, T: ?Sized + 'gc> Copy for Weak<'gc, T> {}
 
-impl<'gc, T: ?Sized + 'gc> Clone for GcWeak<'gc, T> {
+impl<'gc, T: ?Sized + 'gc> Clone for Weak<'gc, T> {
     #[inline]
-    fn clone(&self) -> GcWeak<'gc, T> {
+    fn clone(&self) -> Weak<'gc, T> {
         *self
     }
 }
 
-impl<'gc, T: ?Sized + 'gc> Debug for GcWeak<'gc, T> {
+impl<'gc, T: ?Sized + 'gc> Debug for Weak<'gc, T> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        write!(fmt, "(GcWeak)")
+        write!(fmt, "(GC'd Weak)")
     }
 }
 
-unsafe impl<'gc, T: ?Sized + 'gc> Collect<'gc> for GcWeak<'gc, T> {
+unsafe impl<'gc, T: ?Sized + 'gc> Collect<'gc> for Weak<'gc, T> {
     #[inline]
     fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
         cc.trace_gc_weak(Self::erase(*self))
     }
 }
 
-impl<'gc, T: ?Sized + 'gc> GcWeak<'gc, T> {
-    /// If the `GcWeak` pointer can be safely upgraded to a strong pointer, upgrade it.
+impl<'gc, T: ?Sized + 'gc> Weak<'gc, T> {
+    /// If the `Weak` pointer can be safely upgraded to a strong pointer, upgrade it.
     ///
-    /// This will fail if the value the `GcWeak` points to is dropped, or if we are in the
+    /// This will fail if the value the `Weak` points to is dropped, or if we are in the
     /// [`crate::arena::CollectionPhase::Sweeping`] phase and we know the pointer *will* be dropped.
     #[inline]
     pub fn upgrade(self, mc: &Mutation<'gc>) -> Option<Gc<'gc, T>> {
         mc.upgrade(self.inner.ptr).then_some(self.inner)
     }
 
-    /// Returns whether the value referenced by this `GcWeak` has already been dropped.
+    /// Returns whether the value referenced by this `Weak` has already been dropped.
     ///
     /// # Note
     ///
-    /// This is not the same as using [`GcWeak::upgrade`] and checking if the result is `None`! A
-    /// `GcWeak` pointer can fail to upgrade *without* having been dropped if the current collection
+    /// This is not the same as using [`Weak::upgrade`] and checking if the result is `None`! A
+    /// `Weak` pointer can fail to upgrade *without* having been dropped if the current collection
     /// phase is [`crate::arena::CollectionPhase::Sweeping`] and the pointer *will* be dropped.
     ///
-    /// It is not safe to use this to use this and casting as a substitute for [`GcWeak::upgrade`].
+    /// It is not safe to use this to use this and casting as a substitute for [`Weak::upgrade`].
     #[inline]
     pub fn is_dropped(self) -> bool {
         !self.inner.ptr.header().is_live()
@@ -63,8 +63,8 @@ impl<'gc, T: ?Sized + 'gc> GcWeak<'gc, T> {
     /// found by the marking phase, and if it is not already dropped, it *will* be dropped as soon
     /// as collection resumes.
     ///
-    /// If the pointer is still valid, it may be resurrected using `GcWeak::upgrade` or
-    /// `GcWeak::resurrect`.
+    /// If the pointer is still valid, it may be resurrected using `Weak::upgrade` or
+    /// `Weak::resurrect`.
     ///
     /// NOTE: This returns true if the pointer was destined to be collected at the **start** of the
     /// current finalization callback. Resurrecting one pointer can transitively resurrect others,
@@ -76,7 +76,7 @@ impl<'gc, T: ?Sized + 'gc> GcWeak<'gc, T> {
         Gc::is_dead(fc, self.inner)
     }
 
-    /// Manually marks a dead (but non-dropped) `GcWeak` as strongly reachable and keeps it alive.
+    /// Manually marks a dead (but non-dropped) `Weak` as strongly reachable and keeps it alive.
     ///
     /// This is similar to a write barrier in that it moves the collection phase back to `Marking`
     /// if it is not already there. All transitively held pointers from this will also be marked as
@@ -97,12 +97,12 @@ impl<'gc, T: ?Sized + 'gc> GcWeak<'gc, T> {
         }
     }
 
-    /// Returns true if two `GcWeak`s point to the same allocation.
+    /// Returns true if two `Weak`s point to the same allocation.
     ///
     /// Similarly to `Rc::ptr_eq` and `Arc::ptr_eq`, this function ignores the metadata of `dyn`
     /// pointers.
     #[inline]
-    pub fn ptr_eq(this: GcWeak<'gc, T>, other: GcWeak<'gc, T>) -> bool {
+    pub fn ptr_eq(this: Weak<'gc, T>, other: Weak<'gc, T>) -> bool {
         // TODO: Equivalent to `core::ptr::addr_eq`:
         // https://github.com/rust-lang/rust/issues/116324
         this.as_ptr() as *const () == other.as_ptr() as *const ()
@@ -118,35 +118,35 @@ impl<'gc, T: ?Sized + 'gc> GcWeak<'gc, T> {
     /// # Safety
     /// It must be valid to dereference a `*mut U` that has come from casting a `*mut T`.
     #[inline]
-    pub unsafe fn cast<U: 'gc>(this: GcWeak<'gc, T>) -> GcWeak<'gc, U> {
+    pub unsafe fn cast<U: 'gc>(this: Weak<'gc, T>) -> Weak<'gc, U> {
         // SAFETY: The caller guarantees that this is safe.
-        GcWeak {
+        Weak {
             inner: unsafe { Gc::cast::<U>(this.inner) },
         }
     }
 
-    /// Cast a `GcWeak` to the unit type.
+    /// Cast a `Weak` to the unit type.
     ///
-    /// This is exactly the same as `unsafe { GcWeak::cast::<()>(this) }`, but we can provide this
+    /// This is exactly the same as `unsafe { Weak::cast::<()>(this) }`, but we can provide this
     /// method safely because it is always safe to dereference a `*mut ()` that has come from
     /// casting a `*mut T`.
     #[inline]
-    pub fn erase(this: GcWeak<'gc, T>) -> GcWeak<'gc, ()> {
-        GcWeak {
+    pub fn erase(this: Weak<'gc, T>) -> Weak<'gc, ()> {
+        Weak {
             inner: Gc::erase(this.inner),
         }
     }
 
-    /// Retrieve a `GcWeak` from a raw pointer obtained from `GcWeak::as_ptr`
+    /// Retrieve a `Weak` from a raw pointer obtained from `Weak::as_ptr`
     ///
     /// # Safety
-    /// The provided pointer must have been obtained from `GcWeak::as_ptr` or `Gc::as_ptr`, and
+    /// The provided pointer must have been obtained from `Weak::as_ptr` or `Gc::as_ptr`, and
     /// the pointer must not have been *fully* collected yet (it may be a dropped but valid weak
     /// pointer).
     #[inline]
-    pub unsafe fn from_ptr(ptr: *const T) -> GcWeak<'gc, T> {
+    pub unsafe fn from_ptr(ptr: *const T) -> Weak<'gc, T> {
         // SAFETY: The caller guarantees that this is safe.
-        GcWeak {
+        Weak {
             inner: unsafe { Gc::from_ptr(ptr) },
         }
     }

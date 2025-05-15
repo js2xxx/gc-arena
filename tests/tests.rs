@@ -9,7 +9,7 @@ use std::{collections::HashMap, rc::Rc};
 
 use gc_arena::{
     Arena, Collect, DynamicRootSet, Gc, Lock, RefLock, Rootable, arena::CollectionPhase,
-    gc::GcWeak, metrics::Pacing, static_collect,
+    gc::Weak, metrics::Pacing, static_collect,
 };
 
 #[test]
@@ -35,7 +35,7 @@ fn weak_allocation() {
     #[collect(no_drop)]
     struct TestRoot<'gc> {
         test: Gc<'gc, RefLock<Option<Gc<'gc, i32>>>>,
-        weak: GcWeak<'gc, i32>,
+        weak: Weak<'gc, i32>,
     }
 
     let mut arena = Arena::<Rootable![TestRoot<'_>]>::new(|mc| {
@@ -493,7 +493,7 @@ fn test_unsize() {
         let gc_weak = Gc::downgrade(gc);
 
         let dyn_gc: Gc<'_, dyn Display> = gc;
-        let dyn_weak: GcWeak<'_, dyn Display> = gc_weak;
+        let dyn_weak: Weak<'_, dyn Display> = gc_weak;
         assert_eq!(dyn_gc.to_string(), "Hello world!");
         assert_eq!(dyn_weak.upgrade(mc).unwrap().to_string(), "Hello world!");
 
@@ -501,7 +501,7 @@ fn test_unsize() {
         let gc_weak = Gc::downgrade(gc);
 
         let dyn_gc: Gc<'_, RefLock<dyn Display>> = gc;
-        let dyn_weak: GcWeak<'_, RefLock<dyn Display>> = gc_weak;
+        let dyn_weak: Weak<'_, RefLock<dyn Display>> = gc_weak;
         assert_eq!(dyn_gc.borrow().to_string(), "12345");
         assert_eq!(dyn_weak.upgrade(mc).unwrap().borrow().to_string(), "12345");
     })
@@ -866,8 +866,8 @@ fn basic_finalization() {
     struct TestRoot<'gc> {
         a: Gc<'gc, u8>,
         b: Gc<'gc, u8>,
-        c: GcWeak<'gc, u8>,
-        d: GcWeak<'gc, u8>,
+        c: Weak<'gc, u8>,
+        d: Weak<'gc, u8>,
     }
 
     let mut arena = Arena::<Rootable![TestRoot<'_>]>::new(|mc| {
@@ -920,7 +920,7 @@ fn transitive_death() {
     #[collect(no_drop)]
     struct TestRoot<'gc> {
         a: Option<Gc<'gc, Gc<'gc, u8>>>,
-        b: GcWeak<'gc, Gc<'gc, u8>>,
+        b: Weak<'gc, Gc<'gc, u8>>,
     }
 
     let mut arena = Arena::<Rootable![TestRoot<'_>]>::new(|mc| {
@@ -1016,7 +1016,7 @@ fn barriers() {
     #[derive(Default)]
     struct Node<'gc, S, W> {
         strong_child: Cell<Option<Gc<'gc, S>>>,
-        weak_child: Cell<Option<GcWeak<'gc, W>>>,
+        weak_child: Cell<Option<Weak<'gc, W>>>,
     }
 
     unsafe impl<'gc, S: Collect<'gc>, W: Collect<'gc>> Collect<'gc> for Node<'gc, S, W> {
@@ -1061,7 +1061,7 @@ fn barriers() {
     // Make `node` adopt a white child weak pointer with a backwards barrier.
     arena.mutate(|mc, root| {
         let w = Gc::downgrade(Gc::new(mc, 13));
-        mc.backward_barrier_weak(Gc::erase(root.node), GcWeak::erase(w));
+        mc.backward_barrier_weak(Gc::erase(root.node), Weak::erase(w));
         root.node.weak_child.set(Some(w));
     });
 
@@ -1101,7 +1101,7 @@ fn barriers() {
     // Make `node` adopt a white child weak pointer with a forwards barrier.
     arena.mutate(|mc, root| {
         let w = Gc::downgrade(Gc::new(mc, 13));
-        mc.forward_barrier_weak(Some(Gc::erase(root.node)), GcWeak::erase(w));
+        mc.forward_barrier_weak(Some(Gc::erase(root.node)), Weak::erase(w));
         root.node.weak_child.set(Some(w));
     });
 

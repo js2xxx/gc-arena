@@ -20,7 +20,7 @@ use crate::{
 mod unique;
 mod weak;
 
-pub use self::{unique::UniqueGc, weak::GcWeak};
+pub use self::{unique::UniqueGc, weak::Weak};
 
 /// A garbage collected pointer to a type T. Implements Copy, and is implemented as a plain machine
 /// pointer. You can only allocate `Gc` pointers through a `&Mutation<'gc>` inside an arena type,
@@ -244,8 +244,8 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
     }
 
     #[inline]
-    pub fn downgrade(this: Gc<'gc, T>) -> GcWeak<'gc, T> {
-        GcWeak { inner: this }
+    pub fn downgrade(this: Gc<'gc, T>) -> Weak<'gc, T> {
+        Weak { inner: this }
     }
 
     /// Triggers a write barrier on this `Gc`, allowing for safe mutation.
@@ -282,7 +282,7 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
     }
 
     /// Returns true when a pointer is *dead* during finalization. This is equivalent to
-    /// `GcWeak::is_dead` for strong pointers.
+    /// `Weak::is_dead` for strong pointers.
     ///
     /// Any strong pointer reachable from the root will never be dead, BUT there can be strong
     /// pointers reachable only through other weak pointers that can be dead.
@@ -293,7 +293,7 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
 
     /// Manually marks a dead `Gc` pointer as reachable and keeps it alive.
     ///
-    /// Equivalent to `GcWeak::resurrect` for strong pointers. Manually marks this pointer and
+    /// Equivalent to `Weak::resurrect` for strong pointers. Manually marks this pointer and
     /// all transitively held pointers as reachable, thus keeping them from being dropped this
     /// collection cycle.
     #[inline]

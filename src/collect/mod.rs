@@ -1,4 +1,4 @@
-use crate::gc::{Gc, GcWeak};
+use crate::gc::{Gc, Weak};
 
 mod imp;
 mod static_;
@@ -20,10 +20,10 @@ pub use {gc_arena_derive::Collect, static_::Static};
 ///
 /// # Safety
 ///
-///   1. `Collect::trace` *must* trace over *every* `Gc` and `GcWeak` pointer held inside this type.
-///   2. Held `Gc` and `GcWeak` pointers must not be accessed inside `Drop::drop` since during drop
+///   1. `Collect::trace` *must* trace over *every* `Gc` and `Weak` pointer held inside this type.
+///   2. Held `Gc` and `Weak` pointers must not be accessed inside `Drop::drop` since during drop
 ///      any such pointer may be dangling.
-///   3. Internal mutability *must* not be used to adopt new `Gc` or `GcWeak` pointers without
+///   3. Internal mutability *must* not be used to adopt new `Gc` or `Weak` pointers without
 ///      calling appropriate write barrier operations during the same arena mutation.
 pub unsafe trait Collect<'gc> {
     /// As an optimization, if this type can never hold a `Gc` pointer and `trace` is unnecessary
@@ -32,13 +32,13 @@ pub unsafe trait Collect<'gc> {
     const NEEDS_TRACE: bool = true;
 
     /// *Must* call [`Trace::trace_gc`] (resp. [`Trace::trace_gc_weak`]) on all directly owned
-    /// [`Gc`] (resp. [`GcWeak`]) pointers. If this type holds inner types that implement `Collect`,
+    /// [`Gc`] (resp. [`Weak`]) pointers. If this type holds inner types that implement `Collect`,
     /// a valid implementation would simply call [`Trace::trace`] on all the held values to ensure
     /// this.
     ///
     /// # Tracing pointers
     ///
-    /// [`Gc`] and [`GcWeak`] have their own implementations of `Collect` which in turn call
+    /// [`Gc`] and [`Weak`] have their own implementations of `Collect` which in turn call
     /// [`Trace::trace_gc`] and [`Trace::trace_gc_weak`] respectively. Because of this, it is not
     /// actually ever necessary to call [`Trace::trace_gc`] and [`Trace::trace_gc_weak`] directly,
     /// but be careful! It is important that owned pointers *themselves* are traced and NOT their
@@ -63,8 +63,8 @@ pub trait Trace<'gc> {
     /// Trace a [`Gc`] pointer (of any real type).
     fn trace_gc(&mut self, gc: Gc<'gc, ()>);
 
-    /// Trace a [`GcWeak`] pointer (of any real type).
-    fn trace_gc_weak(&mut self, gc: GcWeak<'gc, ()>);
+    /// Trace a [`Weak`] pointer (of any real type).
+    fn trace_gc_weak(&mut self, gc: Weak<'gc, ()>);
 
     /// This is a convenience method that calls [`Collect::trace`] but automatically adds a
     /// [`Collect::NEEDS_TRACE`] check around it.
