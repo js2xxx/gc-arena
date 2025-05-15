@@ -2,6 +2,7 @@
 #![feature(allocator_api)]
 #![feature(layout_for_ptr)]
 #![feature(maybe_uninit_write_slice)]
+#![feature(min_specialization)]
 #![feature(ptr_metadata)]
 #![feature(trusted_len)]
 #![feature(unsize)]

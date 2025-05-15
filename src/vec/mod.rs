@@ -1,7 +1,7 @@
 use core::{
     cmp, fmt,
     hash::{Hash, Hasher},
-    iter,
+    iter::TrustedLen,
     mem::{ManuallyDrop, MaybeUninit},
     ops::{Deref, DerefMut},
     ptr, slice,
@@ -11,7 +11,13 @@ use self::set_len_on_drop::SetLenOnDrop;
 
 use crate::{Collect, Gc, Mutation, collect::Trace, gc::Unique};
 
+mod iter;
 mod set_len_on_drop;
+mod spec_extend;
+mod spec_from_elem;
+
+pub use self::iter::IntoIter;
+use self::{spec_extend::SpecExtend, spec_from_elem::SpecFromElem};
 
 // Tiny Vecs are dumb. Skip to:
 // - 8 if the element size is 1, because any heap allocators is likely
@@ -117,7 +123,7 @@ impl<'gc, T: 'gc + Collect<'gc>> Vec<'gc, T> {
     /// # });
     /// ```
     pub fn with_capacity(mc: &Mutation<'gc>, capacity: usize) -> Self {
-        let cap = if size_of::<T>() == 0 {
+        let cap = if const { size_of::<T>() == 0 } {
             usize::MAX
         } else {
             capacity
@@ -227,7 +233,6 @@ impl<'gc, T: 'gc + Collect<'gc>> Vec<'gc, T> {
             buf.assume_init()
         }
     }
-
 
     /// Converts the vector into a [`Gc<'gc, [T]>`][GC'd slice].
     ///
@@ -343,7 +348,7 @@ impl<'gc, T: 'gc + Collect<'gc>> Vec<'gc, T> {
     {
         let len = self.len();
         if new_len > len {
-            self.extend_trusted(mc, iter::repeat_with(f).take(new_len - len));
+            self.extend_trusted(mc, core::iter::repeat_with(f).take(new_len - len));
         } else {
             self.truncate(new_len);
         }
@@ -654,6 +659,11 @@ impl<'gc, T: 'gc> Vec<'gc, T> {
 }
 
 impl<'gc, T: 'gc + Collect<'gc> + Clone> Vec<'gc, T> {
+    /// Constructs a `Vec` from `n` elements.
+    pub fn from_elem(mc: &Mutation<'gc>, elem: T, n: usize) -> Self {
+        SpecFromElem::from_elem(elem, n, mc)
+    }
+
     /// Resizes the `Vec` in-place so that `len` is equal to `new_len`.
     ///
     /// If `new_len` is greater than `len`, the `Vec` is extended by the
@@ -679,13 +689,44 @@ impl<'gc, T: 'gc + Collect<'gc> + Clone> Vec<'gc, T> {
             self.truncate(new_len);
         }
     }
+
+    pub fn extend_from_slice(&mut self, mc: &Mutation<'gc>, other: &[T]) {
+        SpecExtend::extend(self, mc, other.iter());
+    }
 }
 
 impl<'gc, T: 'gc + Collect<'gc>> Vec<'gc, T> {
+    // leaf method to which various SpecFrom/SpecExtend implementations delegate when
+    // they have no further optimizations to apply
+    #[track_caller]
+    fn extend_desugared<I: Iterator<Item = T>>(&mut self, mc: &Mutation<'gc>, mut iterator: I) {
+        // This is the case for a general iterator.
+        //
+        // This function should be the moral equivalent of:
+        //
+        //      for item in iterator {
+        //          self.push(item);
+        //      }
+        while let Some(element) = iterator.next() {
+            let len = self.len();
+            if len == self.capacity() {
+                let (lower, _) = iterator.size_hint();
+                self.reserve(mc, lower.saturating_add(1));
+            }
+            unsafe {
+                ptr::write(self.as_mut_ptr().add(len), element);
+                // Since next() executes user code which can panic we have to bump the length
+                // after each step.
+                // NB can't overflow since we would have had to alloc the address space
+                self.set_len(len + 1);
+            }
+        }
+    }
+
     // specific extend for `TrustedLen` iterators, called both by the specializations
     // and internal places where resolving specialization makes compilation slower
     #[track_caller]
-    fn extend_trusted(&mut self, mc: &Mutation<'gc>, iterator: impl iter::TrustedLen<Item = T>) {
+    fn extend_trusted(&mut self, mc: &Mutation<'gc>, iterator: impl TrustedLen<Item = T>) {
         let (low, high) = iterator.size_hint();
         if let Some(additional) = high {
             debug_assert_eq!(
@@ -827,5 +868,14 @@ impl<'gc, T: 'gc> AsMut<[T]> for Vec<'gc, T> {
 impl<'gc, T: 'gc> From<Unique<'gc, [T]>> for Vec<'gc, T> {
     fn from(slice: Unique<'gc, [T]>) -> Vec<'gc, T> {
         slice.into_vec()
+    }
+}
+
+impl<'gc, T: 'gc> IntoIterator for Vec<'gc, T> {
+    type Item = T;
+    type IntoIter = IntoIter<'gc, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        IntoIter::from_vec(self)
     }
 }
