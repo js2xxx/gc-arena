@@ -101,8 +101,12 @@ macro_rules! vec {
         $crate::vec::Vec::from_elem($mc, $elem, $count)
     };
     [$mc:expr => $($elem:expr),* $(,)?] => {
-        $crate::vec::Vec::from($crate::gc::Unique::new_unsize::<[_]>($mc, [$($elem),*]))
+        $crate::gc::Unique::new_unsize::<[_]>($mc, [$($elem),*]).into_vec()
     };
+}
+
+impl<'gc, T: 'gc> Vec<'gc, T> {
+    pub(crate) const ASSERT_NO_DROP: () = assert!(!core::mem::needs_drop::<T>());
 }
 
 impl<'gc, T: 'gc + Collect<'gc>> Vec<'gc, T> {
@@ -128,6 +132,7 @@ impl<'gc, T: 'gc + Collect<'gc>> Vec<'gc, T> {
     /// # });
     /// ```
     pub fn new(mc: &Mutation<'gc>) -> Self {
+        let () = Self::ASSERT_NO_DROP;
         Self::with_capacity(mc, min_non_zero_cap(size_of::<T>()))
     }
 
@@ -179,6 +184,7 @@ impl<'gc, T: 'gc + Collect<'gc>> Vec<'gc, T> {
     /// # });
     /// ```
     pub fn with_capacity(mc: &Mutation<'gc>, capacity: usize) -> Self {
+        let () = Self::ASSERT_NO_DROP;
         let cap = if const { size_of::<T>() == 0 } {
             usize::MAX
         } else {
@@ -420,6 +426,7 @@ impl<'gc, T: 'gc> Vec<'gc, T> {
     ///
     /// [`Vec::into_raw_parts`]: Vec::into_raw_parts
     pub unsafe fn from_raw_parts(ptr: *mut T, len: usize, capacity: usize) -> Self {
+        let () = Self::ASSERT_NO_DROP;
         let buf = unsafe { Unique::from_raw(ptr::from_raw_parts_mut(ptr, capacity)) };
         Self { buf, len }
     }
@@ -445,19 +452,12 @@ impl<'gc, T: 'gc> Vec<'gc, T> {
         if self.len > len {
             // SAFETY:
             //
-            // * the slice passed to `drop_in_place` is valid; the `len > self.len`
-            //   case avoids creating an invalid slice, and
-            // * the `len` of the vector is shrunk before calling `drop_in_place`,
-            //   such that no value will be dropped twice in case `drop_in_place`
+            // * the `len` of the vector is shrunk before calling `collect`,
+            //   such that no value will be traced twice in case `collect`
             //   were to panic once (if it panics twice, the program aborts).
             unsafe {
                 self.set_len(len);
-
-                let remaining_len = self.len - len;
-                let ptr = self.as_mut_ptr();
-                let ptr = ptr::from_raw_parts_mut::<[T]>(ptr.add(len), remaining_len);
-
-                ptr::drop_in_place(ptr);
+                let () = Self::ASSERT_NO_DROP;
             }
         }
     }
@@ -667,17 +667,11 @@ impl<'gc, T: 'gc> Vec<'gc, T> {
     /// of the vector.
     #[inline]
     pub fn clear(&mut self) {
-        let elems: *mut [T] = self.as_mut_slice();
-
         // SAFETY:
         // - `elems` comes directly from `as_mut_slice` and is therefore valid.
-        // - Setting `self.len` before calling `drop_in_place` means that,
-        //   if an element's `Drop` impl panics, the vector's `Drop` impl will
-        //   do nothing (leaking the rest of the elements) instead of dropping
-        //   some twice.
         unsafe {
             self.set_len(0);
-            ptr::drop_in_place(elems);
+            let () = Self::ASSERT_NO_DROP;
         }
     }
 
@@ -717,6 +711,7 @@ impl<'gc, T: 'gc> Vec<'gc, T> {
 impl<'gc, T: 'gc + Collect<'gc> + Clone> Vec<'gc, T> {
     /// Constructs a `Vec` from `n` elements.
     pub fn from_elem(mc: &Mutation<'gc>, elem: T, n: usize) -> Self {
+        let () = Self::ASSERT_NO_DROP;
         SpecFromElem::from_elem(elem, n, mc)
     }
 
@@ -764,6 +759,7 @@ impl<'gc, T: 'gc + Collect<'gc>> Vec<'gc, T> {
     }
 
     pub fn collect<I: Iterator<Item = T>>(mc: &Mutation<'gc>, iter: I) -> Self {
+        let () = Self::ASSERT_NO_DROP;
         SpecFromIter::from_iter(mc, iter)
     }
 
@@ -922,12 +918,7 @@ impl<'gc, T: 'gc + Hash> Hash for Vec<'gc, T> {
 
 impl<'gc, T: 'gc> Drop for Vec<'gc, T> {
     fn drop(&mut self) {
-        unsafe {
-            // use drop for [T]
-            // use a raw slice to refer to the elements of the vector as weakest necessary type;
-            // could avoid questions of validity in certain cases
-            ptr::drop_in_place(ptr::slice_from_raw_parts_mut(self.as_mut_ptr(), self.len))
-        }
+        let () = Self::ASSERT_NO_DROP;
         // The GC handles deallocation
     }
 }
@@ -969,7 +960,7 @@ impl<'gc, T: 'gc> IntoIterator for Vec<'gc, T> {
 mod tests {
     use std::string::ToString;
 
-    use crate::arena::rootless_mutate;
+    use crate::{Gc, arena::rootless_mutate};
 
     #[test]
     fn macros() {
@@ -979,9 +970,9 @@ mod tests {
             vec.push(mc, 2);
             assert_eq!(vec, [1, 2]);
 
-            let v2 = crate::vec![mc => "Hello".to_string(); 1024];
+            let v2 = crate::vec![mc => Gc::new(mc, "Hello".to_string()); 1024];
             assert_eq!(v2.len(), 1024);
-            assert_eq!(v2[50], "Hello");
+            assert_eq!(*v2[50], "Hello");
 
             let v3 = crate::vec![mc => 3, 4, 5, 6, 7];
             assert_eq!(v3, [3, 4, 5, 6, 7]);

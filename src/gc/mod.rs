@@ -308,32 +308,32 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
     }
 }
 
-impl<'gc, T: PartialEq + ?Sized + 'gc> PartialEq for Gc<'gc, T> {
-    fn eq(&self, other: &Self) -> bool {
+impl<'gc, T: PartialEq<U> + ?Sized + 'gc, U: ?Sized + 'gc> PartialEq<Gc<'gc, U>> for Gc<'gc, T> {
+    fn eq(&self, other: &Gc<'gc, U>) -> bool {
         (**self).eq(other)
     }
 }
 
 impl<'gc, T: Eq + ?Sized + 'gc> Eq for Gc<'gc, T> {}
 
-impl<'gc, T: PartialOrd + ?Sized + 'gc> PartialOrd for Gc<'gc, T> {
-    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+impl<'gc, T: PartialOrd<U> + ?Sized + 'gc, U: ?Sized + 'gc> PartialOrd<Gc<'gc, U>> for Gc<'gc, T> {
+    fn partial_cmp(&self, other: &Gc<'gc, U>) -> Option<core::cmp::Ordering> {
         (**self).partial_cmp(other)
     }
 
-    fn le(&self, other: &Self) -> bool {
+    fn le(&self, other: &Gc<'gc, U>) -> bool {
         (**self).le(other)
     }
 
-    fn lt(&self, other: &Self) -> bool {
+    fn lt(&self, other: &Gc<'gc, U>) -> bool {
         (**self).lt(other)
     }
 
-    fn ge(&self, other: &Self) -> bool {
+    fn ge(&self, other: &Gc<'gc, U>) -> bool {
         (**self).ge(other)
     }
 
-    fn gt(&self, other: &Self) -> bool {
+    fn gt(&self, other: &Gc<'gc, U>) -> bool {
         (**self).gt(other)
     }
 }

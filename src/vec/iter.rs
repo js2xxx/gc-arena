@@ -114,10 +114,6 @@ impl<'gc, T: 'gc> IntoIter<'gc, T> {
         // `ptr` must stay aligned, while `end` may be unaligned.
         self.end = self.start;
     }
-
-    fn as_raw_mut_slice(&mut self) -> *mut [T] {
-        ptr::from_raw_parts_mut(self.start.as_ptr(), self.len())
-    }
 }
 
 impl<'gc, T: 'gc> AsRef<[T]> for IntoIter<'gc, T> {
@@ -198,9 +194,7 @@ unsafe impl<'gc, T: 'gc> TrustedLen for IntoIter<'gc, T> {}
 
 impl<'gc, T: 'gc> Drop for IntoIter<'gc, T> {
     fn drop(&mut self) {
-        // SAFETY: `self.start..self.end` contains valid
-        // elements of the same allocation as `self.buf`.
-        unsafe { ptr::drop_in_place(self.as_raw_mut_slice()) };
+        let () = Vec::<'gc, T>::ASSERT_NO_DROP;
         // GC handles deallocation.
     }
 }

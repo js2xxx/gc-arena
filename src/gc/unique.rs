@@ -495,6 +495,7 @@ impl<'gc, T: ?Sized + 'gc> Unique<'gc, T> {
 
 impl<'gc, T: 'gc> Unique<'gc, [T]> {
     pub fn into_vec(self) -> Vec<'gc, T> {
+        let () = Vec::<'gc, T>::ASSERT_NO_DROP;
         // SAFETY: the elements is handled separately in `Vec`s, so
         // assign the VTable to uninitalized states.
         unsafe { self.ptr.header().reset_vtable::<[MaybeUninit<T>]>() };
