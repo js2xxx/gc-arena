@@ -12,9 +12,8 @@ use core::{
 use crate::{
     Finalization,
     barrier::{Unlock, Write},
-    collect::{Collect, Trace},
+    collect::{Collect, Static, Trace},
     context::Mutation,
-    static_collect::Static,
     types::{GcBox, GcBoxHeader, GcBoxInner, GcColor, Invariant, MetaLayout},
 };
 
@@ -158,7 +157,7 @@ impl<'gc, T: 'static> Gc<'gc, T> {
     /// following code:
     ///
     /// ```rust
-    /// # use gc_arena::{Gc, Static};
+    /// # use gc_arena::{Gc, collect::Static};
     /// # fn main() {
     /// # gc_arena::arena::rootless_mutate(|mc| {
     /// struct MyStaticStruct;

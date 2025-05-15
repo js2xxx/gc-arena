@@ -13,14 +13,12 @@ extern crate alloc;
 pub mod arena;
 pub mod barrier;
 pub mod collect;
-mod collect_impl;
 mod context;
 pub mod dynamic_roots;
 pub mod gc;
 pub mod lock;
 pub mod metrics;
 mod no_drop;
-mod static_collect;
 mod types;
 
 #[cfg(feature = "allocator-api2")]
@@ -42,5 +40,4 @@ pub use self::{
     dynamic_roots::{DynamicRoot, DynamicRootSet},
     gc::Gc,
     lock::{GcLock, GcRefLock, Lock, RefLock},
-    static_collect::Static,
 };
