@@ -18,6 +18,7 @@ use crate::{
     collect::{Collect, Static, Trace},
     context::Mutation,
     types::{GcBox, GcBoxHeader, GcBoxInner, GcColor, Invariant, MetaLayout},
+    vec::Vec,
 };
 
 mod unique;
@@ -347,5 +348,19 @@ impl<'gc, T: Ord + ?Sized + 'gc> Ord for Gc<'gc, T> {
 impl<'gc, T: Hash + ?Sized + 'gc> Hash for Gc<'gc, T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         (**self).hash(state)
+    }
+}
+
+impl<'gc, T: 'gc + Collect<'gc>> From<(&Mutation<'gc>, Vec<'gc, T>)> for Gc<'gc, [T]> {
+    #[inline]
+    fn from((mc, vec): (&Mutation<'gc>, Vec<'gc, T>)) -> Self {
+        vec.into_gc_slice(mc)
+    }
+}
+
+impl<'gc, T: 'gc + Collect<'gc>> From<(Vec<'gc, T>, &Mutation<'gc>)> for Gc<'gc, [T]> {
+    #[inline]
+    fn from((vec, mc): (Vec<'gc, T>, &Mutation<'gc>)) -> Self {
+        vec.into_gc_slice(mc)
     }
 }

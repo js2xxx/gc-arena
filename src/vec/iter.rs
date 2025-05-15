@@ -86,7 +86,11 @@ impl<'gc, T: 'gc> IntoIter<'gc, T> {
         unsafe {
             let mut buf = ptr::read(&this.buf);
             let start = NonNull::new_unchecked(buf.as_mut_ptr().cast::<T>());
-            let end = start.add(this.len);
+            let end = if size_of::<T>() == 0 {
+                start.byte_add(this.len)
+            } else {
+                start.add(this.len)
+            };
             Self { buf, start, end }
         }
     }
@@ -191,10 +195,3 @@ impl<'gc, T: 'gc> ExactSizeIterator for IntoIter<'gc, T> {}
 impl<'gc, T: 'gc> FusedIterator for IntoIter<'gc, T> {}
 
 unsafe impl<'gc, T: 'gc> TrustedLen for IntoIter<'gc, T> {}
-
-impl<'gc, T: 'gc> Drop for IntoIter<'gc, T> {
-    fn drop(&mut self) {
-        let () = Vec::<'gc, T>::ASSERT_NO_DROP;
-        // GC handles deallocation.
-    }
-}

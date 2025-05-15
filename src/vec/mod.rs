@@ -3,8 +3,9 @@ use core::{
     hash::{Hash, Hasher},
     iter::TrustedLen,
     mem::{ManuallyDrop, MaybeUninit},
-    ops::{Deref, DerefMut},
-    ptr, slice,
+    ops::{Deref, DerefMut, Index, IndexMut},
+    ptr,
+    slice::{self, SliceIndex},
 };
 
 use spec_from_iter::SpecFromIter;
@@ -13,13 +14,14 @@ use self::set_len_on_drop::SetLenOnDrop;
 
 use crate::{Collect, Gc, Mutation, collect::Trace, gc::Unique};
 
+mod convert_vec;
 mod iter;
 mod set_len_on_drop;
 mod spec_extend;
 mod spec_from_elem;
 mod spec_from_iter;
 
-pub use self::iter::IntoIter;
+pub use self::{convert_vec::ConvertVec, iter::IntoIter};
 use self::{spec_extend::SpecExtend, spec_from_elem::SpecFromElem};
 
 // Tiny Vecs are dumb. Skip to:
@@ -101,7 +103,7 @@ macro_rules! vec {
         $crate::vec::Vec::from_elem($mc, $elem, $count)
     };
     [$mc:expr => $($elem:expr),* $(,)?] => {
-        $crate::gc::Unique::new_unsize::<[_]>($mc, [$($elem),*]).into_vec()
+        $crate::vec::Vec::from_array($mc, [$($elem),*])
     };
 }
 
@@ -192,6 +194,12 @@ impl<'gc, T: 'gc + Collect<'gc>> Vec<'gc, T> {
         };
         let buf = Gc::new_uninit_slice(mc, cap);
         Self { buf, len: 0 }
+    }
+
+    /// Constructs a new `Vec<'gc, T>` from an array.
+    #[inline]
+    pub fn from_array<const N: usize>(mc: &Mutation<'gc>, array: [T; N]) -> Self {
+        Unique::new_unsize::<[T]>(mc, array).into_vec()
     }
 
     /// # Safety
@@ -715,6 +723,18 @@ impl<'gc, T: 'gc + Collect<'gc> + Clone> Vec<'gc, T> {
         SpecFromElem::from_elem(elem, n, mc)
     }
 
+    /// Clones a `Vec`.
+    ///
+    /// The signature differs from the [`Clone`] trait from the standard library
+    /// since a [`Mutation`] is required to handle the allocation.
+    pub fn clone(&self, mc: &Mutation<'gc>) -> Self {
+        ConvertVec::to_vec(&**self, mc)
+    }
+
+    pub fn clone_from(&mut self, mc: &Mutation<'gc>, src: &Self) {
+        ConvertVec::clone_into_vec(&**src, mc, self);
+    }
+
     /// Resizes the `Vec` in-place so that `len` is equal to `new_len`.
     ///
     /// If `new_len` is greater than `len`, the `Vec` is extended by the
@@ -916,10 +936,19 @@ impl<'gc, T: 'gc + Hash> Hash for Vec<'gc, T> {
     }
 }
 
-impl<'gc, T: 'gc> Drop for Vec<'gc, T> {
-    fn drop(&mut self) {
-        let () = Self::ASSERT_NO_DROP;
-        // The GC handles deallocation
+impl<'gc, T: 'gc, I: SliceIndex<[T]>> Index<I> for Vec<'gc, T> {
+    type Output = I::Output;
+
+    #[inline]
+    fn index(&self, index: I) -> &Self::Output {
+        Index::index(&**self, index)
+    }
+}
+
+impl<'gc, T: 'gc, I: SliceIndex<[T]>> IndexMut<I> for Vec<'gc, T> {
+    #[inline]
+    fn index_mut(&mut self, index: I) -> &mut Self::Output {
+        IndexMut::index_mut(&mut **self, index)
     }
 }
 
@@ -941,18 +970,154 @@ impl<'gc, T: 'gc> AsMut<[T]> for Vec<'gc, T> {
     }
 }
 
-impl<'gc, T: 'gc> From<Unique<'gc, [T]>> for Vec<'gc, T> {
-    fn from(slice: Unique<'gc, [T]>) -> Vec<'gc, T> {
-        slice.into_vec()
-    }
-}
-
 impl<'gc, T: 'gc> IntoIterator for Vec<'gc, T> {
     type Item = T;
     type IntoIter = IntoIter<'gc, T>;
 
     fn into_iter(self) -> Self::IntoIter {
         IntoIter::from_vec(self)
+    }
+}
+
+impl<'a, 'gc, T: 'gc> IntoIterator for &'a Vec<'gc, T> {
+    type Item = &'a T;
+    type IntoIter = slice::Iter<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl<'a, 'gc, T: 'gc> IntoIterator for &'a mut Vec<'gc, T> {
+    type Item = &'a mut T;
+    type IntoIter = slice::IterMut<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter_mut()
+    }
+}
+
+impl<'gc, T> From<(&[T], &Mutation<'gc>)> for Vec<'gc, T>
+where
+    T: Collect<'gc> + Clone + 'gc,
+{
+    fn from((slice, mc): (&[T], &Mutation<'gc>)) -> Self {
+        ConvertVec::to_vec(slice, mc)
+    }
+}
+
+impl<'gc, T> From<(&Mutation<'gc>, &[T])> for Vec<'gc, T>
+where
+    T: Collect<'gc> + Clone + 'gc,
+{
+    fn from((mc, slice): (&Mutation<'gc>, &[T])) -> Self {
+        ConvertVec::to_vec(slice, mc)
+    }
+}
+
+impl<'gc, T> From<(&mut [T], &Mutation<'gc>)> for Vec<'gc, T>
+where
+    T: Collect<'gc> + Clone + 'gc,
+{
+    #[inline]
+    fn from((slice, mc): (&mut [T], &Mutation<'gc>)) -> Self {
+        ConvertVec::to_vec(slice, mc)
+    }
+}
+
+impl<'gc, T> From<(&Mutation<'gc>, &mut [T])> for Vec<'gc, T>
+where
+    T: Collect<'gc> + Clone + 'gc,
+{
+    #[inline]
+    fn from((mc, slice): (&Mutation<'gc>, &mut [T])) -> Self {
+        ConvertVec::to_vec(slice, mc)
+    }
+}
+
+impl<'gc, T, const N: usize> From<(&[T; N], &Mutation<'gc>)> for Vec<'gc, T>
+where
+    T: Collect<'gc> + Clone + 'gc,
+{
+    #[inline]
+    fn from((array, mc): (&[T; N], &Mutation<'gc>)) -> Self {
+        (array.as_slice(), mc).into()
+    }
+}
+
+impl<'gc, T, const N: usize> From<(&Mutation<'gc>, &[T; N])> for Vec<'gc, T>
+where
+    T: Collect<'gc> + Clone + 'gc,
+{
+    #[inline]
+    fn from((mc, array): (&Mutation<'gc>, &[T; N])) -> Self {
+        (array.as_slice(), mc).into()
+    }
+}
+
+impl<'gc, T, const N: usize> From<(&mut [T; N], &Mutation<'gc>)> for Vec<'gc, T>
+where
+    T: Collect<'gc> + Clone + 'gc,
+{
+    #[inline]
+    fn from((array, mc): (&mut [T; N], &Mutation<'gc>)) -> Self {
+        (array.as_slice(), mc).into()
+    }
+}
+
+impl<'gc, T, const N: usize> From<(&Mutation<'gc>, &mut [T; N])> for Vec<'gc, T>
+where
+    T: Collect<'gc> + Clone + 'gc,
+{
+    #[inline]
+    fn from((mc, array): (&Mutation<'gc>, &mut [T; N])) -> Self {
+        (array.as_slice(), mc).into()
+    }
+}
+
+impl<'gc, T, const N: usize> From<([T; N], &Mutation<'gc>)> for Vec<'gc, T>
+where
+    T: Collect<'gc> + 'gc,
+{
+    #[inline]
+    fn from((array, mc): ([T; N], &Mutation<'gc>)) -> Self {
+        Self::from_array(mc, array)
+    }
+}
+
+impl<'gc, T, const N: usize> From<(&Mutation<'gc>, [T; N])> for Vec<'gc, T>
+where
+    T: Collect<'gc> + 'gc,
+{
+    #[inline]
+    fn from((mc, array): (&Mutation<'gc>, [T; N])) -> Self {
+        Self::from_array(mc, array)
+    }
+}
+
+impl<'gc, T: 'gc> From<Unique<'gc, [T]>> for Vec<'gc, T> {
+    fn from(slice: Unique<'gc, [T]>) -> Vec<'gc, T> {
+        slice.into_vec()
+    }
+}
+
+impl<'gc, T: 'gc, const N: usize> TryFrom<Vec<'gc, T>> for [T; N] {
+    type Error = Vec<'gc, T>;
+
+    fn try_from(mut vec: Vec<'gc, T>) -> Result<Self, Vec<'gc, T>> {
+        if vec.len() != N {
+            return Err(vec);
+        }
+
+        // SAFETY: `.set_len(0)` is always sound.
+        unsafe { vec.set_len(0) };
+
+        // SAFETY: A `Vec`'s pointer is always aligned properly, and
+        // the alignment the array needs is the same as the items.
+        // We checked earlier that we have sufficient items.
+        // The items will not double-drop as the `set_len`
+        // tells the `Vec` not to also drop them.
+        Ok(unsafe { ptr::read(vec.as_ptr() as *const [T; N]) })
     }
 }
 

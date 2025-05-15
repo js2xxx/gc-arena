@@ -130,6 +130,7 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, T> {
     }
 
     /// Creates a new `Unique` containing the given value, unsizing to a dynamically sized type.
+    #[inline]
     pub fn new_unsize<Dyn>(mc: &Mutation<'gc>, t: T) -> Unique<'gc, Dyn>
     where
         T: Collect<'gc> + Unsize<Dyn>,
@@ -503,6 +504,18 @@ impl<'gc, T: 'gc> Unique<'gc, [T]> {
         let (ptr, len) = Self::into_raw(self).to_raw_parts();
         // SAFETY: `ptr` is valid and aligned guaranteed by the caller.
         unsafe { Vec::from_raw_parts(ptr.cast(), len, len) }
+    }
+}
+
+impl<'gc, T: 'gc + Collect<'gc>> From<(&Mutation<'gc>, Vec<'gc, T>)> for Unique<'gc, [T]> {
+    fn from((mc, vec): (&Mutation<'gc>, Vec<'gc, T>)) -> Self {
+        vec.into_unique_slice(mc)
+    }
+}
+
+impl<'gc, T: 'gc + Collect<'gc>> From<(Vec<'gc, T>, &Mutation<'gc>)> for Unique<'gc, [T]> {
+    fn from((vec, mc): (Vec<'gc, T>, &Mutation<'gc>)) -> Self {
+        vec.into_unique_slice(mc)
     }
 }
 
