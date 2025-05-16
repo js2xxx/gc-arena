@@ -360,18 +360,18 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, [MaybeUninit<T>]> {
     /// let src = [Rc::new(1), Rc::new(2), Rc::new(3), Rc::new(4)];
     ///
     /// let gc = Unique::new_uninit_slice(mc, 2);
-    /// let gc = Unique::write_clone_of_slice(gc, &src[1..3]);
+    /// let gc = gcwrite_clone_of_slice(&src[1..3]);
     ///
     /// assert_eq!(src.map(|rc| Rc::strong_count(&rc)), [1, 2, 2, 1]);
     /// # });
     /// ```
-    pub fn write_clone_of_slice(mut this: Self, src: &[T]) -> Unique<'gc, [T]>
+    pub fn write_clone_of_slice(mut self, src: &[T]) -> Unique<'gc, [T]>
     where
         T: Clone,
     {
-        (*this).write_clone_of_slice(src);
+        (*self).write_clone_of_slice(src);
         // SAFETY: The value is initialized by `src`.
-        unsafe { Self::assume_init(this) }
+        unsafe { self.assume_init() }
     }
 
     /// Constructs a new garbage-collected slice, copying each element from the given slice.
@@ -385,7 +385,7 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, [MaybeUninit<T>]> {
     /// let src = [1, 2, 3, 4];
     ///
     /// let gc = Unique::new_uninit_slice(mc, 2);
-    /// let gc = Unique::write_copy_of_slice(gc, &src[1..3]);
+    /// let gc = gc.write_copy_of_slice(&src[1..3]);
     ///
     /// assert_eq!(src, [1, 2, 3, 4]);
     /// assert_eq!(*gc, [2, 3]);
@@ -393,13 +393,57 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, [MaybeUninit<T>]> {
     /// ```
     ///
     /// [`write_clone_of_slice`]: Self::write_clone_of_slice
-    pub fn write_copy_of_slice(mut this: Self, src: &[T]) -> Unique<'gc, [T]>
+    pub fn write_copy_of_slice(mut self, src: &[T]) -> Unique<'gc, [T]>
     where
         T: Copy,
     {
-        (*this).write_copy_of_slice(src);
+        (*self).write_copy_of_slice(src);
         // SAFETY: The value is initialized by `src`.
-        unsafe { Self::assume_init(this) }
+        unsafe { Self::assume_init(self) }
+    }
+
+    /// Constructs a new garbage-collected slice, initializing each element with the given value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use gc_arena::{arena::rootless_mutate, gc::Unique};
+    /// # rootless_mutate(|mc| {
+    /// let gc = Unique::new_uninit_slice(mc, 3);
+    /// let gc = gc.write_filled(42);
+    ///
+    /// assert_eq!(*gc, [42, 42, 42]);
+    /// # });
+    /// ```
+    pub fn write_filled(mut self, value: T) -> Unique<'gc, [T]>
+    where
+        T: Clone,
+    {
+        (*self).write_filled(value);
+        // SAFETY: The value is initialized by `value`.
+        unsafe { Self::assume_init(self) }
+    }
+
+    /// Constructs a new garbage-collected slice, initializing each element with the given function.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use gc_arena::{arena::rootless_mutate, gc::Unique};
+    /// # rootless_mutate(|mc| {
+    /// let gc = Unique::new_uninit_slice(mc, 3);
+    /// let gc = gc.write_with(|i| i * 2);
+    ///
+    /// assert_eq!(*gc, [0, 2, 4]);
+    /// # });
+    /// ```
+    pub fn write_with<F>(mut self, f: F) -> Unique<'gc, [T]>
+    where
+        F: FnMut(usize) -> T,
+    {
+        (*self).write_with(f);
+        // SAFETY: The value is initialized by `f`.
+        unsafe { Self::assume_init(self) }
     }
 }
 
