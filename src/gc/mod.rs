@@ -141,6 +141,14 @@ impl<'gc, T: Collect<'gc> + 'gc> Gc<'gc, T> {
     pub fn new_zeroed_slice(mc: &Mutation<'gc>, len: usize) -> Unique<'gc, [MaybeUninit<T>]> {
         Unique::new_zeroed_slice(mc, len)
     }
+
+    /// Transforms an iterator into a `Gc<'gc, [T]>`.
+    ///
+    /// The signature of this function differs from [`Iterator::collect`] from the
+    /// standard library since a [`Mutation`] is required to handle the allocation.
+    pub fn collect<I: IntoIterator<Item = T>>(mc: &Mutation<'gc>, iter: I) -> Gc<'gc, [T]> {
+        Unique::collect(mc, iter).into_gc()
+    }
 }
 
 impl<'gc, T: 'static> Gc<'gc, T> {
@@ -178,6 +186,16 @@ impl<'gc> Gc<'gc, dyn Any> {
             None
         }
     }
+
+    /// Cast a `Gc` pointer to a concrete type.
+    ///
+    /// # Safety
+    ///
+    /// `self` must contains a `Unique<T>`.
+    pub unsafe fn downcast_unchecked<T: Any>(self) -> Gc<'gc, T> {
+        // SAFETY: `self` is a `Gc<dyn Any>`, so it is valid to cast to `T`.
+        unsafe { Gc::cast::<T>(self) }
+    }
 }
 
 impl<'gc> Gc<'gc, dyn Error + 'static> {
@@ -188,6 +206,16 @@ impl<'gc> Gc<'gc, dyn Error + 'static> {
         } else {
             None
         }
+    }
+
+    /// Cast a `Gc` pointer to a concrete type.
+    ///
+    /// # Safety
+    ///
+    /// `self` must contains a `Unique<T>`.
+    pub unsafe fn downcast_unchecked<T: Error + 'static>(self) -> Gc<'gc, T> {
+        // SAFETY: `self` is a `Gc<dyn Any>`, so it is valid to cast to `T`.
+        unsafe { Gc::cast::<T>(self) }
     }
 }
 

@@ -4,6 +4,7 @@ use core::{
     borrow::Borrow,
     error::Error,
     fmt::{self, Debug, Display, Pointer},
+    hash::{Hash, Hasher},
     marker::{PhantomData, Unsize},
     mem::MaybeUninit,
     ops::{Deref, DerefMut},
@@ -265,6 +266,14 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, [T]> {
             return ret;
         }
     }
+
+    /// Transforms an iterator into a `Unique<'gc, [T]>`.
+    ///
+    /// The signature of this function differs from [`Iterator::collect`] from the
+    /// standard library since a [`Mutation`] is required to handle the allocation.
+    pub fn collect<I: IntoIterator<Item = T>>(mc: &Mutation<'gc>, iter: I) -> Unique<'gc, [T]> {
+        Vec::collect(mc, iter).into_unique_slice(mc)
+    }
 }
 
 impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, MaybeUninit<T>> {
@@ -456,6 +465,16 @@ impl<'gc> Unique<'gc, dyn Any> {
             Err(self)
         }
     }
+
+    /// Cast a `Unique` GC pointer to a concrete type.
+    ///
+    /// # Safety
+    ///
+    /// `self` must contains a `Unique<T>`.
+    pub unsafe fn downcast_unchecked<T: Any>(self) -> Unique<'gc, T> {
+        // SAFETY: `self` is a `Unique<dyn Any>`, so it is valid to cast to `T`.
+        unsafe { Unique::cast(self) }
+    }
 }
 
 impl<'gc> Unique<'gc, dyn Error + 'static> {
@@ -466,6 +485,16 @@ impl<'gc> Unique<'gc, dyn Error + 'static> {
         } else {
             Err(self)
         }
+    }
+
+    /// Cast a `Unique` GC pointer to a concrete type.
+    ///
+    /// # Safety
+    ///
+    /// `self` must contains a `Unique<T>`.
+    pub unsafe fn downcast_unchecked<T: Error + 'static>(self) -> Unique<'gc, T> {
+        // SAFETY: `self` is a `Unique<dyn Error>`, so it is valid to cast to `T`.
+        unsafe { Unique::cast(self) }
     }
 }
 
@@ -548,6 +577,82 @@ impl<'gc, T: 'gc> Unique<'gc, [T]> {
         let (ptr, len) = Self::into_raw(self).to_raw_parts();
         // SAFETY: `ptr` is valid and aligned guaranteed by the caller.
         unsafe { Vec::from_raw_parts(ptr.cast(), len, len) }
+    }
+}
+
+impl<'gc, T: 'gc> IntoIterator for Unique<'gc, [T]> {
+    type Item = T;
+
+    type IntoIter = crate::vec::IntoIter<'gc, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.into_vec().into_iter()
+    }
+}
+
+impl<'a, 'gc, T: 'gc> IntoIterator for &'a Unique<'gc, [T]> {
+    type Item = &'a T;
+
+    type IntoIter = core::slice::Iter<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl<'a, 'gc, T: 'gc> IntoIterator for &'a mut Unique<'gc, [T]> {
+    type Item = &'a mut T;
+
+    type IntoIter = core::slice::IterMut<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter_mut()
+    }
+}
+
+impl<'gc, T: PartialEq<U> + ?Sized + 'gc, U: ?Sized + 'gc> PartialEq<Unique<'gc, U>>
+    for Unique<'gc, T>
+{
+    fn eq(&self, other: &Unique<'gc, U>) -> bool {
+        (**self).eq(other)
+    }
+}
+
+impl<'gc, T: Eq + ?Sized + 'gc> Eq for Unique<'gc, T> {}
+
+impl<'gc, T: PartialOrd<U> + ?Sized + 'gc, U: ?Sized + 'gc> PartialOrd<Unique<'gc, U>>
+    for Unique<'gc, T>
+{
+    fn partial_cmp(&self, other: &Unique<'gc, U>) -> Option<core::cmp::Ordering> {
+        (**self).partial_cmp(other)
+    }
+
+    fn le(&self, other: &Unique<'gc, U>) -> bool {
+        (**self).le(other)
+    }
+
+    fn lt(&self, other: &Unique<'gc, U>) -> bool {
+        (**self).lt(other)
+    }
+
+    fn ge(&self, other: &Unique<'gc, U>) -> bool {
+        (**self).ge(other)
+    }
+
+    fn gt(&self, other: &Unique<'gc, U>) -> bool {
+        (**self).gt(other)
+    }
+}
+
+impl<'gc, T: Ord + ?Sized + 'gc> Ord for Unique<'gc, T> {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        (**self).cmp(other)
+    }
+}
+
+impl<'gc, T: Hash + ?Sized + 'gc> Hash for Unique<'gc, T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        (**self).hash(state)
     }
 }
 

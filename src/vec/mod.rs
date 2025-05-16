@@ -767,20 +767,32 @@ impl<'gc, T: 'gc + Collect<'gc> + Clone> Vec<'gc, T> {
 }
 
 impl<'gc, T: 'gc + Collect<'gc>> Vec<'gc, T> {
-    pub fn extend<I: Iterator<Item = T>>(&mut self, mc: &Mutation<'gc>, iter: I) {
-        SpecExtend::extend(self, mc, iter);
+    /// Extends a `Vec` with the contents of an iterator.
+    ///
+    /// The signature differs from the [`Extend`] trait from the standard library
+    /// since a [`Mutation`] is required to handle the allocation.
+    pub fn extend<I: IntoIterator<Item = T>>(&mut self, mc: &Mutation<'gc>, iter: I) {
+        SpecExtend::extend(self, mc, iter.into_iter());
     }
 
-    pub fn extend_ref<'a, I: Iterator<Item = &'a T>>(&mut self, mc: &Mutation<'gc>, iter: I)
+    /// Extends a `Vec` with the contents of an iterator via cloning.
+    ///
+    /// The signature differs from the [`Extend`] trait from the standard library
+    /// since a [`Mutation`] is required to handle the allocation.
+    pub fn extend_ref<'a, I: IntoIterator<Item = &'a T>>(&mut self, mc: &Mutation<'gc>, iter: I)
     where
         T: Clone + 'a,
     {
-        SpecExtend::extend(self, mc, iter);
+        SpecExtend::extend(self, mc, iter.into_iter());
     }
 
-    pub fn collect<I: Iterator<Item = T>>(mc: &Mutation<'gc>, iter: I) -> Self {
+    /// Transforms an iterator into a `Vec`.
+    ///
+    /// The signature of this function differs from [`Iterator::collect`] from the
+    /// standard library since a [`Mutation`] is required to handle the allocation.
+    pub fn collect<I: IntoIterator<Item = T>>(mc: &Mutation<'gc>, iter: I) -> Self {
         let () = Self::ASSERT_NO_DROP;
-        SpecFromIter::from_iter(mc, iter)
+        SpecFromIter::from_iter(mc, iter.into_iter())
     }
 
     // leaf method to which various SpecFrom/SpecExtend implementations delegate when
