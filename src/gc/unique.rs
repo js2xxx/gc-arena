@@ -360,7 +360,7 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, [MaybeUninit<T>]> {
     /// let src = [Rc::new(1), Rc::new(2), Rc::new(3), Rc::new(4)];
     ///
     /// let gc = Unique::new_uninit_slice(mc, 2);
-    /// let gc = gcwrite_clone_of_slice(&src[1..3]);
+    /// let gc = gc.write_clone_of_slice(&src[1..3]);
     ///
     /// assert_eq!(src.map(|rc| Rc::strong_count(&rc)), [1, 2, 2, 1]);
     /// # });
