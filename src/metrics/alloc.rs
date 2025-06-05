@@ -1,4 +1,4 @@
-use std::{alloc::Layout, marker::PhantomData, ptr::NonNull};
+use core::{alloc::Layout, marker::PhantomData, ptr::NonNull};
 
 use alloc::alloc::{AllocError, Allocator, Global};
 

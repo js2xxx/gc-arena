@@ -1,6 +1,5 @@
-use alloc::vec::Vec;
 use core::{
-    cell::{Cell, UnsafeCell},
+    cell::Cell,
     cmp::Ordering::Greater,
     marker::Unsize,
     mem,
@@ -218,11 +217,11 @@ pub(crate) struct Context {
 
     /// A queue of gray objects, used during `Phase::Mark`.
     /// This holds traceable objects that have yet to be traced.
-    gray: Queue<GcBox>,
+    gray: Cell<Option<GcBox>>,
 
     // A queue of gray objects that became gray as a result
     // of a write barrier.
-    gray_again: Queue<GcBox>,
+    gray_again: Cell<Option<GcBox>>,
 }
 
 impl Drop for Context {
@@ -268,8 +267,8 @@ impl Context {
             sweep: None,
             sweep_prev: Cell::new(None),
             root_needs_trace: true,
-            gray: Queue::new(),
-            gray_again: Queue::new(),
+            gray: Cell::new(None),
+            gray_again: Cell::new(None),
         }
     }
 
@@ -304,7 +303,7 @@ impl Context {
 
     #[inline]
     pub(crate) fn gray_remaining(&self) -> bool {
-        !self.gray.is_empty() || !self.gray_again.is_empty() || self.root_needs_trace
+        self.gray.get().is_some() || self.gray_again.get().is_some() || self.root_needs_trace
     }
 
     // Do some collection work until either we have achieved our `target` (paying off debt or
@@ -562,7 +561,8 @@ impl Context {
                     // the normal gray queue.
                     header.set_color(GcColor::Gray);
                     debug_assert!(header.is_live());
-                    self.gray.push(gc_box);
+                    header.set_gray_next(self.gray.get());
+                    self.gray.set(Some(gc_box));
                 } else {
                     // A white object that doesn't need tracing simply becomes black.
                     header.set_color(GcColor::Black);
@@ -641,7 +641,8 @@ impl Context {
         let color = header.color();
         if matches!(header.color(), GcColor::White | GcColor::WhiteWeak) {
             header.set_color(GcColor::Gray);
-            self.gray.push(gc_box);
+            header.set_gray_next(self.gray.get());
+            self.gray.set(Some(gc_box));
             // Only marking the *first* time counts as a mark metric.
             if color == GcColor::White {
                 self.metrics.mark_gc_marked(gc_box.size_of_box());
@@ -653,7 +654,13 @@ impl Context {
         // We look for an object first in the normal gray queue, then the "gray again" queue.
         // Processing "gray again" objects later gives them more time to be mutated again without
         // triggering another write barrier.
-        let next_gray = self.gray.pop().or_else(|| self.gray_again.pop());
+        let pop = |list: &Cell<Option<GcBox>>| {
+            list.get().inspect(|gc_box| {
+                list.set(gc_box.header().gray_next());
+                gc_box.header().set_gray_next(None);
+            })
+        };
+        let next_gray = pop(&self.gray).or_else(|| pop(&self.gray_again));
 
         if let Some(gc_box) = next_gray {
             // We always mark work for objects processed from both the gray and "gray again" queue.
@@ -781,7 +788,8 @@ impl Context {
         let header = gc_box.header();
         debug_assert_eq!(header.color(), GcColor::Black);
         header.set_color(GcColor::Gray);
-        self.gray_again.push(gc_box);
+        header.set_gray_next(self.gray_again.get());
+        self.gray_again.set(Some(gc_box));
         self.metrics.mark_gc_untraced(gc_box.size_of_box());
     }
 }
@@ -868,38 +876,5 @@ impl<'a> PhaseGuard<'a> {
             id = metrics.arena_id(),
             ?phase,
         )
-    }
-}
-
-// A shared, internally mutable `Vec<T>` that avoids the overhead of `RefCell`. Used for the "gray"
-// and "gray again" queues.
-//
-// SAFETY: We do not return any references at all to the contents of the internal `UnsafeCell`, nor
-// do we provide any methods with callbacks. Since this type is `!Sync`, only one reference to the
-// `UnsafeCell` contents can be alive at any given time, thus we cannot violate aliasing rules.
-#[derive(Default)]
-struct Queue<T> {
-    vec: UnsafeCell<Vec<T>>,
-}
-
-impl<T> Queue<T> {
-    fn new() -> Self {
-        Self {
-            vec: UnsafeCell::new(Vec::new()),
-        }
-    }
-
-    fn is_empty(&self) -> bool {
-        unsafe { (*self.vec.get().cast_const()).is_empty() }
-    }
-
-    fn push(&self, val: T) {
-        unsafe {
-            (*self.vec.get()).push(val);
-        }
-    }
-
-    fn pop(&self) -> Option<T> {
-        unsafe { (*self.vec.get()).pop() }
     }
 }

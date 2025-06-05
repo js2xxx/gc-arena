@@ -1,15 +1,12 @@
 use core::{cell::RefCell, fmt, mem};
 
-use alloc::{
-    rc::{Rc, Weak},
-    vec::Vec,
-};
+use alloc::rc::{Rc, Weak};
 
 use crate::{
     Gc, Mutation, Rootable,
     arena::Root,
     collect::{Collect, Trace},
-    metrics::Metrics,
+    vec::Vec,
 };
 
 /// A way of registering GC roots dynamically.
@@ -42,7 +39,7 @@ impl<'gc> DynamicRootSet<'gc> {
         DynamicRootSet(Gc::new(
             mc,
             Inner {
-                slots: Rc::new(RefCell::new(Slots::new(mc.metrics().clone()))),
+                slots: Rc::new(RefCell::new(Slots::new(mc))),
             },
         ))
     }
@@ -60,7 +57,7 @@ impl<'gc> DynamicRootSet<'gc> {
         mc.backward_barrier(self.0, Some(root));
 
         let mut slots = self.0.slots.borrow_mut();
-        let index = slots.add(unsafe { Gc::cast(root) });
+        let index = slots.add(mc, unsafe { Gc::cast(root) });
 
         let ptr =
             unsafe { mem::transmute::<Gc<'gc, Root<'gc, R>>, Gc<'static, Root<'static, R>>>(root) };
@@ -223,16 +220,8 @@ unsafe impl<'gc> Collect<'gc> for Slot<'gc> {
 }
 
 struct Slots<'gc> {
-    metrics: Metrics,
-    slots: Vec<Slot<'gc>>,
+    slots: Vec<'gc, Slot<'gc>>,
     next_free: Index,
-}
-
-impl<'gc> Drop for Slots<'gc> {
-    fn drop(&mut self) {
-        self.metrics
-            .mark_external_deallocation(self.slots.capacity() * mem::size_of::<Slot>());
-    }
 }
 
 unsafe impl<'gc> Collect<'gc> for Slots<'gc> {
@@ -242,15 +231,14 @@ unsafe impl<'gc> Collect<'gc> for Slots<'gc> {
 }
 
 impl<'gc> Slots<'gc> {
-    fn new(metrics: Metrics) -> Self {
+    fn new(mc: &Mutation<'gc>) -> Self {
         Self {
-            metrics,
-            slots: Vec::new(),
+            slots: Vec::new(mc),
             next_free: NULL_INDEX,
         }
     }
 
-    fn add(&mut self, p: Gc<'gc, ()>) -> Index {
+    fn add(&mut self, mc: &Mutation<'gc>, p: Gc<'gc, ()>) -> Index {
         // Occupied slot refcount starts at 0. A refcount of 0 and a set ptr implies that there is
         // *one* live reference.
 
@@ -270,20 +258,13 @@ impl<'gc> Slots<'gc> {
             idx
         } else {
             let idx = self.slots.len();
-
-            let old_capacity = self.slots.capacity();
-            self.slots.push(Slot::Occupied {
-                root: p,
-                ref_count: 0,
-            });
-            let new_capacity = self.slots.capacity();
-
-            debug_assert!(new_capacity >= old_capacity);
-            if new_capacity > old_capacity {
-                self.metrics.mark_external_allocation(
-                    (new_capacity - old_capacity) * mem::size_of::<Slot>(),
-                );
-            }
+            self.slots.push(
+                mc,
+                Slot::Occupied {
+                    root: p,
+                    ref_count: 0,
+                },
+            );
 
             idx
         }

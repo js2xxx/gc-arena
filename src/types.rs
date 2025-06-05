@@ -130,6 +130,8 @@ impl GcBox {
 pub(crate) struct GcBoxHeader {
     /// The next element in the global linked list of allocated objects.
     next: Cell<Option<GcBox>>,
+    /// The next element in the gray list.
+    gray_next: Cell<Option<GcBox>>,
     /// A custom virtual function table for handling type-specific operations.
     ///
     /// The lower bits of the pointer are used to store GC flags:
@@ -175,6 +177,7 @@ impl GcBoxHeader {
         let vtable: &'static _ = &<T as HasCollectVTable>::VTABLE;
         Self {
             next: Cell::new(None),
+            gray_next: Cell::new(None),
             tagged_vtable: Cell::new(ptr::from_ref(vtable)),
         }
     }
@@ -187,6 +190,7 @@ impl GcBoxHeader {
         let vtable: &'static _ = &<T as HasCollectVTableUnsize<U>>::VTABLE;
         Self {
             next: Cell::new(None),
+            gray_next: Cell::new(None),
             tagged_vtable: Cell::new(ptr::from_ref(vtable)),
         }
     }
@@ -243,6 +247,18 @@ impl GcBoxHeader {
     #[inline(always)]
     pub(crate) fn set_next(&self, next: Option<GcBox>) {
         self.next.set(next)
+    }
+
+    /// Gets the next element in the gray list.
+    #[inline(always)]
+    pub(crate) fn gray_next(&self) -> Option<GcBox> {
+        self.gray_next.get()
+    }
+
+    /// Sets the next element in the gray list.
+    #[inline(always)]
+    pub(crate) fn set_gray_next(&self, next: Option<GcBox>) {
+        self.gray_next.set(next)
     }
 
     #[inline]
