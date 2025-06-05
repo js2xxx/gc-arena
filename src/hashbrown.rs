@@ -7,7 +7,7 @@ where
     K: Collect<'gc>,
     V: Collect<'gc>,
     S: 'static,
-    A: Allocator + Clone + Collect<'gc>,
+    A: Allocator + Collect<'gc>,
 {
     const NEEDS_TRACE: bool = K::NEEDS_TRACE || V::NEEDS_TRACE || A::NEEDS_TRACE;
 
@@ -25,7 +25,7 @@ unsafe impl<'gc, T, S, A> Collect<'gc> for hashbrown::HashSet<T, S, A>
 where
     T: Collect<'gc>,
     S: 'static,
-    A: Allocator + Clone + Collect<'gc>,
+    A: Allocator + Collect<'gc>,
 {
     const NEEDS_TRACE: bool = T::NEEDS_TRACE || A::NEEDS_TRACE;
 
@@ -41,7 +41,7 @@ where
 unsafe impl<'gc, T, A> Collect<'gc> for hashbrown::HashTable<T, A>
 where
     T: Collect<'gc>,
-    A: Allocator + Clone + Collect<'gc>,
+    A: Allocator + Collect<'gc>,
 {
     const NEEDS_TRACE: bool = T::NEEDS_TRACE || A::NEEDS_TRACE;
 

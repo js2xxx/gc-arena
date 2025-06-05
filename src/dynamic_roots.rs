@@ -184,8 +184,7 @@ impl fmt::Display for MismatchedRootSet {
     }
 }
 
-#[cfg(feature = "std")]
-impl std::error::Error for MismatchedRootSet {}
+impl core::error::Error for MismatchedRootSet {}
 
 struct Inner<'gc> {
     slots: Rc<RefCell<Slots<'gc>>>,

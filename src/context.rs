@@ -441,12 +441,12 @@ impl Context {
 
         let gc_box = unsafe {
             let mem = if ZEROED {
-                alloc::alloc::alloc_zeroed(alloc_layout)
+                ::alloc::alloc::alloc_zeroed(alloc_layout)
             } else {
-                alloc::alloc::alloc(alloc_layout)
+                ::alloc::alloc::alloc(alloc_layout)
             };
             if mem.is_null() {
-                alloc::alloc::handle_alloc_error(alloc_layout);
+                ::alloc::alloc::handle_alloc_error(alloc_layout);
             }
 
             mem.cast::<<U as Pointee>::Metadata>().write(metadata);
