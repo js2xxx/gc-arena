@@ -25,13 +25,15 @@ pub use {gc_arena_derive::Collect, static_::Static};
 ///      any such pointer may be dangling.
 ///   3. Internal mutability *must* not be used to adopt new `Gc` or `Weak` pointers without
 ///      calling appropriate write barrier operations during the same arena mutation.
+///   4. Structures consisting of `&'gc T` or `&'gc mut T` must not be `Collect<'gc>` unless their
+///      backing GC pointers are collected at the same call site.
 pub unsafe trait Collect<'gc> {
     /// As an optimization, if this type can never hold a `Gc` pointer and `trace` is unnecessary
     /// to call, you may set this to `false`. The default value is `true`, signaling that
     /// `Collect::trace` must be called.
     const NEEDS_TRACE: bool = true;
 
-    /// *Must* call [`Trace::trace_gc`] (resp. [`Trace::trace_gc_weak`]) on all directly owned
+    /// *Must* call [`Trace::trace_gc`] (resp. [`Trace::trace_weak`]) on all directly owned
     /// [`Gc`] (resp. [`Weak`]) pointers. If this type holds inner types that implement `Collect`,
     /// a valid implementation would simply call [`Trace::trace`] on all the held values to ensure
     /// this.
@@ -39,13 +41,13 @@ pub unsafe trait Collect<'gc> {
     /// # Tracing pointers
     ///
     /// [`Gc`] and [`Weak`] have their own implementations of `Collect` which in turn call
-    /// [`Trace::trace_gc`] and [`Trace::trace_gc_weak`] respectively. Because of this, it is not
-    /// actually ever necessary to call [`Trace::trace_gc`] and [`Trace::trace_gc_weak`] directly,
+    /// [`Trace::trace_gc`] and [`Trace::trace_weak`] respectively. Because of this, it is not
+    /// actually ever necessary to call [`Trace::trace_gc`] and [`Trace::trace_weak`] directly,
     /// but be careful! It is important that owned pointers *themselves* are traced and NOT their
     /// contents (the content type will usually also implement `Collect`, so this is easy to
     /// accidentally do).
     ///
-    /// It is always okay to use the [`Trace::trace_gc`] and [`Trace::trace_gc_weak`] directly as a
+    /// It is always okay to use the [`Trace::trace_gc`] and [`Trace::trace_weak`] directly as a
     /// potentially less risky alternative when manually implementing `Collect`.
     #[inline]
     #[allow(unused_variables)]
