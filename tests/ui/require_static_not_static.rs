@@ -5,7 +5,7 @@ struct NoCollectImpl<'a>(&'a bool);
 #[derive(Collect)]
 #[collect(no_drop)]
 struct MyStruct<'a> {
-    #[collect(require_static)]
+    #[collect(static)]
     field: NoCollectImpl<'a>
 }
 

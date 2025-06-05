@@ -1,7 +1,7 @@
 error[E0277]: the trait bound `NotCollect: Collect<'_>` is not satisfied
- --> tests/ui/bad_collect_bound.rs:8:12
+ --> tests/ui/bad_collect_bound.rs:7:12
   |
-8 |     field: NotCollect
+7 |     field: NotCollect
   |            ^^^^^^^^^^ the trait `Collect<'_>` is not implemented for `NotCollect`
   |
   = help: the following other types implement trait `Collect<'gc>`:
@@ -16,12 +16,12 @@ error[E0277]: the trait bound `NotCollect: Collect<'_>` is not satisfied
           and $N others
 
 error[E0277]: the trait bound `NotCollect: Collect<'gc>` is not satisfied
- --> tests/ui/bad_collect_bound.rs:8:5
+ --> tests/ui/bad_collect_bound.rs:7:5
   |
 5 | #[derive(Collect)]
   |          ------- in this derive macro expansion
-...
-8 |     field: NotCollect
+6 | struct MyStruct {
+7 |     field: NotCollect
   |     ^^^^^^^^^^^^^^^^^ the trait `Collect<'gc>` is not implemented for `NotCollect`
   |
   = help: the following other types implement trait `Collect<'gc>`:

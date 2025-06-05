@@ -2,6 +2,7 @@ use proc_macro2::{Span, TokenStream};
 use quote::{ToTokens, quote, quote_spanned};
 use syn::{
     parse::{Parse, ParseStream},
+    punctuated::Punctuated,
     spanned::Spanned,
     visit_mut::VisitMut,
 };
@@ -25,7 +26,7 @@ fn collect_derive(s: synstructure::Structure) -> TokenStream {
     // Deriving `Collect` must be done with care, because an implementation of `Drop` is not
     // necessarily safe for `Collect` types. This derive macro has three available modes to ensure
     // that this is safe:
-    //   1) Require that the type be 'static with `#[collect(require_static)]`.
+    //   1) Require that the type be 'static with `#[collect(static)]`.
     //   2) Prohibit a `Drop` impl on the type with `#[collect(no_drop)]`
     //   3) Allow a custom `Drop` impl that might be unsafe with `#[collect(unsafe_drop)]`. Such
     //      `Drop` impls must *not* access garbage collected pointers during `Drop::drop`.
@@ -42,7 +43,7 @@ fn collect_derive(s: synstructure::Structure) -> TokenStream {
 
     fn usage_error(meta: &syn::meta::ParseNestedMeta, msg: &str) -> syn::parse::Error {
         meta.error(format_args!(
-            "{msg}. `#[collect(...)]` requires one mode (`require_static`, `no_drop`, or `unsafe_drop`) and optionally `bound = \"...\"`."
+            "{msg}. `#[collect(...)]` requires one mode (`static`, `no_drop`, or `unsafe_drop`) and optionally `bound = \"...\"`."
         ))
     }
 
@@ -53,7 +54,10 @@ fn collect_derive(s: synstructure::Structure) -> TokenStream {
                     return Err(usage_error(&meta, "multiple bounds specified"));
                 }
 
-                let lit: syn::LitStr = meta.value()?.parse()?;
+                let content;
+                syn::parenthesized!(content in meta.input);
+                let lit: Punctuated<syn::WherePredicate, syn::Token![,]> =
+                    Punctuated::parse_terminated(&content)?;
                 override_bound = Some(lit);
                 return Ok(());
             }
@@ -72,7 +76,7 @@ fn collect_derive(s: synstructure::Structure) -> TokenStream {
 
             if mode.is_some() {
                 return Err(usage_error(&meta, "multiple modes specified"));
-            } else if meta.path.is_ident("require_static") {
+            } else if meta.path.is_ident("static") {
                 mode = Some(Mode::RequireStatic);
             } else if meta.path.is_ident("no_drop") {
                 mode = Some(Mode::NoDrop);
@@ -91,23 +95,12 @@ fn collect_derive(s: synstructure::Structure) -> TokenStream {
         return err.to_compile_error();
     }
 
-    let Some(mode) = mode else {
-        panic!(
-            "{}",
-            "deriving `Collect` requires a `#[collect(...)]` attribute"
-        );
-    };
+    let mode = mode.unwrap_or(Mode::NoDrop);
 
-    let where_clause = if mode == Mode::RequireStatic {
+    let where_clause: TokenStream = if mode == Mode::RequireStatic {
         quote!(where Self: 'static)
     } else {
-        override_bound
-            .as_ref()
-            .map(|x| {
-                x.parse()
-                    .expect("`#[collect]` failed to parse explicit trait bound expression")
-            })
-            .unwrap_or_else(|| quote!())
+        quote!(where #override_bound)
     };
 
     let mut errors = vec![];
@@ -128,8 +121,8 @@ fn collect_derive(s: synstructure::Structure) -> TokenStream {
 
         let mut static_bindings = vec![];
 
-        // Ignore all bindings that have `#[collect(require_static)]` For each binding with
-        // `#[collect(require_static)]`, we push a bound of the form `FieldType: 'static` to
+        // Ignore all bindings that have `#[collect(static)]` For each binding with
+        // `#[collect(static)]`, we push a bound of the form `FieldType: 'static` to
         // `static_bindings`, which will be added to the genererated `Collect` impl. The presence of
         // the bound guarantees that the field cannot hold any `Gc` pointers, so it's safe to ignore
         // that field in `needs_trace` and `trace`
@@ -137,12 +130,12 @@ fn collect_derive(s: synstructure::Structure) -> TokenStream {
             Ok(Some(attr)) => {
                 let mut static_binding = false;
                 let result = attr.parse_nested_meta(|meta| {
-                    if meta.input.is_empty() && meta.path.is_ident("require_static") {
+                    if meta.input.is_empty() && meta.path.is_ident("static") {
                         static_binding = true;
                         static_bindings.push(b.ast().ty.clone());
                         Ok(())
                     } else {
-                        Err(meta.error("Only `#[collect(require_static)]` is supported on a field"))
+                        Err(meta.error("Only `#[collect(static)]` is supported on a field"))
                     }
                 });
                 errors.extend(result.err());
@@ -159,7 +152,7 @@ fn collect_derive(s: synstructure::Structure) -> TokenStream {
             impl_struct.add_where_predicate(syn::parse_quote! { #static_binding: 'static });
         }
 
-        // `#[collect(require_static)]` only makes sense on fields, not enum variants. Emit an error
+        // `#[collect(static)]` only makes sense on fields, not enum variants. Emit an error
         // if it is used in the wrong place
         if let syn::Data::Enum(..) = impl_struct.ast().data {
             for v in impl_struct.variants() {
@@ -175,7 +168,7 @@ fn collect_derive(s: synstructure::Structure) -> TokenStream {
         }
 
         // We've already called `impl_struct.filter`, so we we won't try to include `NEEDS_TRACE`
-        // for the types of fields that have `#[collect(require_static)]`
+        // for the types of fields that have `#[collect(static)]`
         for v in impl_struct.variants() {
             for b in v.bindings() {
                 let ty = &b.ast().ty;
@@ -189,7 +182,7 @@ fn collect_derive(s: synstructure::Structure) -> TokenStream {
                 .to_tokens(&mut needs_trace_expr);
             }
         }
-        // Likewise, this will skip any fields that have `#[collect(require_static)]`
+        // Likewise, this will skip any fields that have `#[collect(static)]`
         let trace_body = impl_struct.each(|bi| {
             // See the above handling of `NEEDS_TRACE` for an explanation of this
             let call_span = bi.ast().span().resolved_at(Span::call_site());
@@ -288,38 +281,39 @@ decl_derive! {
     /// `collect`. This has several optional arguments, but the only required argument is the derive
     /// strategy. This can be one of
     ///
-    /// - `#[collect(require_static)]` - Adds a `'static` bound, which allows for a no-op trace
+    /// - `#[collect(static)]` - Adds a `'static` bound, which allows for a no-op trace
     ///   implementation. This is the ideal choice where possible.
     /// - `#[collect(no_drop)]` - The typical safe tracing derive strategy which only has to add a
     ///   requirement that your struct/enum does not have a custom implementation of `Drop`.
     /// - `#[collect(unsafe_drop)]` - The most versatile tracing derive strategy which allows a
     ///   custom drop implementation. However, this strategy can lead to unsoundness if care is not
     ///   taken (see the above explanation of `Drop` interactions).
+    /// 
+    /// If no strategy is provided, then `#[collect(no_drop)]` is used by default.
     ///
     /// The `collect` attribute also accepts a number of optional configuration settings:
     ///
-    /// - `#[collect(bound = "<code>")]` - Replaces the default generated `where` clause with the
-    ///   given code. This can be an empty string to add no `where` clause, or otherwise must start
-    ///   with `"where"`, e.g., `#[collect(bound = "where T: Collect")]`. Note that this option is
-    ///   ignored for `require_static` mode since the only bound it produces is `Self: 'static`.
+    /// - `#[collect(bound(<code>))]` - Replaces the default generated `where` clause with the
+    ///   given code. The canonical pattern is `#[collect(bound($(T: Trait),* $(,)?))]`. Note that
+    ///   this option is ignored for `static` mode since the only bound it produces is `Self: 'static`.
     ///   Also note that providing an explicit bound in this way is safe, and only changes the trait
     ///   bounds used to enable the implementation of `Collect`.
     ///
-    /// - `#[collect(gc_lifetime = "<lifetime>")]` - the `Collect` trait requires a `'gc` lifetime
+    /// - `#[collect(gc_lifetime = <lifetime>)]` - the `Collect` trait requires a `'gc` lifetime
     ///   parameter. If there is no lifetime parameter on the type, then `Collect` will be
     ///   implemented for all `'gc` lifetimes. If there is one lifetime on the type, this is assumed
     ///   to be the `'gc` lifetime. In the very unusual case that there are two or more lifetime
     ///   parameters, you must specify *which* lifetime should be used as the `'gc` lifetime.
     ///
     /// Options may be passed to the `collect` attribute together, e.g.,
-    /// `#[collect(no_drop, bound = "")]`.
+    /// `#[collect(no_drop, bound())]`.
     ///
     /// The `collect` attribute may also be used on any field of an enum or struct, however the
-    /// only allowed usage is to specify the strategy as `require_static` (no other strategies are
+    /// only allowed usage is to specify the strategy as `static` (no other strategies are
     /// allowed, and no optional settings can be specified). This will add a `'static` bound to the
     /// type of the field (regardless of an explicit `bound` setting) in exchange for not having
     /// to trace into the given field (the ideal choice where possible). Note that if the entire
-    /// struct/enum is marked with `require_static` then this is unnecessary.
+    /// struct/enum is marked with `static` then this is unnecessary.
     collect_derive
 }
 

@@ -15,7 +15,6 @@ use gc_arena::{
 #[test]
 fn simple_allocation() {
     #[derive(Collect)]
-    #[collect(no_drop)]
     struct TestRoot<'gc> {
         test: Gc<'gc, i32>,
     }
@@ -32,7 +31,6 @@ fn simple_allocation() {
 #[test]
 fn weak_allocation() {
     #[derive(Collect)]
-    #[collect(no_drop)]
     struct TestRoot<'gc> {
         test: Gc<'gc, RefLock<Option<Gc<'gc, i32>>>>,
         weak: Weak<'gc, i32>,
@@ -81,7 +79,6 @@ fn dyn_sized_allocation() {
     static_collect!(RefCounter);
 
     #[derive(Collect)]
-    #[collect(no_drop)]
     struct TestRoot<'gc> {
         slice: Gc<'gc, [Gc<'gc, RefCounter>]>,
     }
@@ -121,7 +118,6 @@ fn repeated_allocation_deallocation() {
     type RefCounterMap<'gc> = HashMap<i32, Gc<'gc, (i32, RefCounter)>>;
 
     #[derive(Collect)]
-    #[collect(no_drop)]
     struct TestRoot<'gc>(Gc<'gc, RefLock<RefCounterMap<'gc>>>);
 
     let r = RefCounter(Rc::new(()));
@@ -168,7 +164,6 @@ fn all_dropped() {
     static_collect!(RefCounter);
 
     #[derive(Collect)]
-    #[collect(no_drop)]
     struct TestRoot<'gc>(Gc<'gc, RefLock<Vec<Gc<'gc, RefCounter>>>>);
 
     let r = RefCounter(Rc::new(()));
@@ -193,7 +188,6 @@ fn all_garbage_collected() {
     static_collect!(RefCounter);
 
     #[derive(Collect)]
-    #[collect(no_drop)]
     struct TestRoot<'gc>(Gc<'gc, RefLock<Vec<Gc<'gc, RefCounter>>>>);
 
     let r = RefCounter(Rc::new(()));
@@ -221,7 +215,7 @@ fn test_layouts() {
     static PTR: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
 
     #[derive(Collect)]
-    #[collect(require_static)]
+    #[collect(static)]
     struct Wrapper<T: 'static>(T);
 
     impl<T> Drop for Wrapper<T> {
@@ -278,7 +272,6 @@ fn test_layouts() {
 fn derive_collect() {
     #[allow(unused)]
     #[derive(Collect)]
-    #[collect(no_drop)]
     struct Test1<'gc> {
         a: i32,
         b: Gc<'gc, i32>,
@@ -286,7 +279,6 @@ fn derive_collect() {
 
     #[allow(unused)]
     #[derive(Collect)]
-    #[collect(no_drop)]
     struct Test2 {
         a: i32,
         b: i32,
@@ -294,7 +286,6 @@ fn derive_collect() {
 
     #[allow(unused)]
     #[derive(Collect)]
-    #[collect(no_drop)]
     enum Test3<'gc> {
         B(Gc<'gc, i32>),
         A(i32),
@@ -302,7 +293,6 @@ fn derive_collect() {
 
     #[allow(unused)]
     #[derive(Collect)]
-    #[collect(no_drop)]
     enum Test4 {
         A(i32),
     }
@@ -314,7 +304,6 @@ fn derive_collect() {
 
     #[allow(unused)]
     #[derive(Collect)]
-    #[collect(no_drop)]
     struct Test6(i32);
 
     assert!(Test1::NEEDS_TRACE);
@@ -328,18 +317,16 @@ fn derive_collect() {
 
     #[allow(unused)]
     #[derive(Collect)]
-    #[collect(no_drop)]
     struct Test7 {
-        #[collect(require_static)]
+        #[collect(static)]
         field: NoImpl,
     }
 
     #[allow(unused)]
     #[derive(Collect)]
-    #[collect(no_drop)]
     enum Test8 {
         First {
-            #[collect(require_static)]
+            #[collect(static)]
             field: NoImpl,
         },
     }
@@ -349,26 +336,30 @@ fn derive_collect() {
 
     #[allow(unused)]
     #[derive(Collect)]
-    #[collect(no_drop, bound = "where T: Collect<'gc>")]
+    #[collect(bound(T: Collect<'gc>))]
     struct Test9<T>(T);
 
     #[allow(unused)]
     #[derive(Collect)]
-    #[collect(no_drop, bound = "")]
+    #[collect(bound())]
     struct Test10<'foo, T>(Gc<'foo, ()>, T)
     where
         T: Collect<'foo>;
 
     #[allow(unused)]
     #[derive(Collect)]
-    #[collect(no_drop, bound = "where T: Collect<'foo>")]
+    #[collect(bound(T: Collect<'foo>))]
     struct Test11<'foo, T>(Gc<'foo, ()>, T);
+
+    #[allow(unused)]
+    #[derive(Collect)]
+    #[collect(bound(T: Collect<'foo>), gc_lifetime = 'foo)]
+    struct Test12<'foo, 'bar, T>(Gc<'foo, ()>, core::marker::PhantomData<&'bar T>);
 }
 
 #[test]
 fn test_map() {
     #[derive(Collect)]
-    #[collect(no_drop)]
     struct Root<'gc> {
         some_complex_state: Vec<Gc<'gc, i32>>,
     }
@@ -378,7 +369,6 @@ fn test_map() {
     });
 
     #[derive(Collect)]
-    #[collect(no_drop)]
     struct Intermediate<'gc> {
         root: Root<'gc>,
         state: Gc<'gc, i32>,
@@ -510,7 +500,6 @@ fn test_unsize() {
 #[test]
 fn test_collection_bounded() {
     #[derive(Collect)]
-    #[collect(no_drop)]
     struct TestRoot<'gc> {
         test: Gc<'gc, [u8; 256]>,
     }
@@ -554,7 +543,7 @@ fn test_collection_bounded() {
 #[test]
 fn cast() {
     #[derive(Collect)]
-    #[collect(require_static)]
+    #[collect(static)]
     #[repr(C)]
     struct A {
         header: Cell<u8>,
@@ -562,7 +551,7 @@ fn cast() {
     }
 
     #[derive(Collect)]
-    #[collect(require_static)]
+    #[collect(static)]
     #[repr(C)]
     struct B {
         header: Cell<u8>,
@@ -592,7 +581,7 @@ fn cast() {
 fn ptr_magic() {
     gc_arena::arena::rootless_mutate(|mc| {
         #[derive(Debug, Eq, PartialEq, Collect)]
-        #[collect(require_static)]
+        #[collect(static)]
         struct S(u8, u32, u64);
 
         let a = Gc::new(mc, S(3, 4, 5));
@@ -665,13 +654,11 @@ fn field_locks() {
     use gc_arena::barrier::{field, unlock};
 
     #[derive(Collect)]
-    #[collect(no_drop)]
     struct Nested<'gc> {
         bar: Lock<Option<Gc<'gc, Test<'gc>>>>,
     }
 
     #[derive(Collect)]
-    #[collect(no_drop)]
     struct Test<'gc> {
         foo: RefLock<Gc<'gc, i32>>,
         nested: Nested<'gc>,
@@ -705,7 +692,6 @@ fn field_locks() {
 #[test]
 fn gc_sleep_actually_sleeps() {
     #[derive(Collect)]
-    #[collect(no_drop)]
     struct TestRoot<'gc> {
         test: Gc<'gc, [u8; 256]>,
     }
@@ -751,7 +737,6 @@ fn gc_sleep_actually_sleeps() {
 #[test]
 fn gc_external_allocation_affects_timing() {
     #[derive(Collect)]
-    #[collect(no_drop)]
     struct TestRoot<'gc> {
         test: Gc<'gc, [u8; 256]>,
     }
@@ -802,7 +787,6 @@ fn gc_external_allocation_affects_timing() {
 #[test]
 fn stop_the_world_works() {
     #[derive(Collect)]
-    #[collect(no_drop)]
     struct TestRoot<'gc> {
         vec: Vec<Gc<'gc, [u8; 100]>>,
     }
@@ -862,7 +846,6 @@ fn stop_the_world_works() {
 #[test]
 fn basic_finalization() {
     #[derive(Collect)]
-    #[collect(no_drop)]
     struct TestRoot<'gc> {
         a: Gc<'gc, u8>,
         b: Gc<'gc, u8>,
@@ -917,7 +900,6 @@ fn basic_finalization() {
 #[test]
 fn transitive_death() {
     #[derive(Collect)]
-    #[collect(no_drop)]
     struct TestRoot<'gc> {
         a: Option<Gc<'gc, Gc<'gc, u8>>>,
         b: Weak<'gc, Gc<'gc, u8>>,
@@ -949,7 +931,6 @@ fn transitive_death() {
 #[test]
 fn test_phases() {
     #[derive(Collect)]
-    #[collect(no_drop)]
     struct TestRoot<'gc> {
         test: Gc<'gc, [u8; 1024 * 64]>,
     }
@@ -1029,7 +1010,6 @@ fn barriers() {
     }
 
     #[derive(Collect)]
-    #[collect(no_drop)]
     struct Root<'gc> {
         node: Gc<'gc, Node<'gc, i32, i32>>,
     }
@@ -1116,7 +1096,6 @@ fn barriers() {
 #[test]
 fn cycle_debt_stops() {
     #[derive(Collect)]
-    #[collect(no_drop)]
     struct TestRoot<'gc> {
         test: Gc<'gc, [u8; 512]>,
     }

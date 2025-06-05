@@ -6,7 +6,7 @@ use gc_arena::{Arena, Collect, Gc, Mutation, RefLock, Rootable};
 // to trace our inner `prev`, `next`, or `value`.
 #[derive(Copy, Clone, Collect)]
 // For safety, we agree to not implement `Drop`. We could also use
-// `#[collect(unsafe_drop)]` or `#[collect(require_static)]` (if our type were
+// `#[collect(unsafe_drop)]` or `#[collect(static)]` (if our type were
 // 'static) here instead.
 #[collect(no_drop)]
 struct Node<'gc, T: 'gc> {

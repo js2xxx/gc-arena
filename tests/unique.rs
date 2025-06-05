@@ -9,7 +9,6 @@ use gc_arena::{Arena, Collect, Gc, Rootable, gc::Unique, static_collect};
 #[test]
 fn simple_allocation() {
     #[derive(Collect)]
-    #[collect(no_drop)]
     struct TestRoot<'gc> {
         test: Unique<'gc, i32>,
     }
@@ -31,7 +30,6 @@ fn dyn_sized_allocation() {
     static_collect!(RefCounter);
 
     #[derive(Collect)]
-    #[collect(no_drop)]
     struct TestRoot<'gc> {
         slice: Gc<'gc, [Unique<'gc, RefCounter>]>,
     }

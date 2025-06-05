@@ -41,7 +41,6 @@ impl<'a, T: ?Sized + Rootable<'a>> Rootable<'a> for __DynRootable<T> {
 /// #
 /// # fn main() {
 /// #[derive(Collect)]
-/// #[collect(no_drop)]
 /// struct MyRoot<'gc> {
 ///     ptr: Gc<'gc, i32>,
 /// }
@@ -61,7 +60,6 @@ impl<'a, T: ?Sized + Rootable<'a>> Rootable<'a> for __DynRootable<T> {
 /// #
 /// # fn main() {
 /// #[derive(Collect)]
-/// #[collect(no_drop)]
 /// struct MyGenericRoot<'gc, T> {
 ///     ptr: Gc<'gc, T>,
 /// }
