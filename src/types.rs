@@ -1,4 +1,4 @@
-use core::alloc::{Layout, LayoutError};
+use core::alloc::{Allocator, Layout, LayoutError};
 use core::cell::Cell;
 use core::marker::{PhantomData, Unsize};
 use core::ptr::{DynMetadata, NonNull, Pointee};
@@ -117,12 +117,12 @@ impl GcBox {
     /// **SAFETY**: once called, this `GcBox` should never be accessed by any GC
     /// pointers again.
     #[inline(always)]
-    pub(crate) unsafe fn dealloc(self) {
+    pub(crate) unsafe fn dealloc(self, a: impl Allocator) {
         unsafe {
             let (layout, offset) = (self.header().vtable().box_layout)(self);
             let ptr = self.0.as_ptr().byte_sub(offset) as *mut u8;
             // SAFETY: the pointer was `Box`-allocated with this layout.
-            alloc::alloc::dealloc(ptr, layout);
+            a.deallocate(NonNull::new_unchecked(ptr), layout);
         }
     }
 }

@@ -1,5 +1,8 @@
+use alloc::alloc::Global;
 use alloc::boxed::Box;
 use core::marker::PhantomData;
+use core::ops::DerefMut;
+use core::{alloc::Allocator, ops::Deref};
 
 use crate::{
     Collect,
@@ -95,6 +98,32 @@ pub enum CollectionPhase {
     Sweeping,
 }
 
+#[repr(transparent)]
+struct BoxContext<A: Allocator>(Box<Context, A>);
+
+impl<A: Allocator> Deref for BoxContext<A> {
+    type Target = Box<Context, A>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<A: Allocator> DerefMut for BoxContext<A> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl<A: Allocator> Drop for BoxContext<A> {
+    fn drop(&mut self) {
+        unsafe {
+            let alloc = core::ptr::from_ref(Box::allocator(&self.0) as _);
+            (*self.0).drop(&*alloc);
+        }
+    }
+}
+
 /// A generic, garbage collected arena.
 ///
 /// Garbage collected arenas allow for isolated sets of garbage collected objects with zero-overhead
@@ -114,11 +143,11 @@ pub enum CollectionPhase {
 /// this way, incremental garbage collection can be achieved (assuming "sufficiently small" calls
 /// to `mutate`) that is both extremely safe and zero overhead vs what you would write in C with raw
 /// pointers and manually ensuring that invariants are held.
-pub struct Arena<R>
+pub struct Arena<R, A: Allocator = Global>
 where
     R: for<'a> Rootable<'a>,
 {
-    context: Box<Context>,
+    context: BoxContext<A>,
     root: Root<'static, R>,
 }
 
@@ -128,13 +157,36 @@ where
     for<'a> Root<'a, R>: Sized,
 {
     /// Create a new arena with the given garbage collector tuning parameters. You must provide a
-    /// closure that accepts a `&Mutation<'gc>` and returns the appropriate root.
+    /// closure that accepts a `Mutation<'gc>` and returns the appropriate root.
     pub fn new<F>(f: F) -> Arena<R>
     where
-        F: for<'gc> FnOnce(&'gc Mutation<'gc>) -> Root<'gc, R>,
+        F: for<'gc> FnOnce(&Mutation<'gc>) -> Root<'gc, R>,
+    {
+        Self::new_in(Global, f)
+    }
+
+    /// Similar to `new`, but allows for constructor that can fail.
+    pub fn try_new<F, E>(f: F) -> Result<Arena<R>, E>
+    where
+        F: for<'gc> FnOnce(&Mutation<'gc>) -> Result<Root<'gc, R>, E>,
+    {
+        Self::try_new_in(Global, f)
+    }
+}
+
+impl<R, A: Allocator> Arena<R, A>
+where
+    R: for<'a> Rootable<'a>,
+    for<'a> Root<'a, R>: Sized,
+{
+    /// Create a new arena with the given garbage collector tuning parameters. You must provide a
+    /// closure that accepts a `Mutation<'gc>` and returns the appropriate root.
+    pub fn new_in<F>(alloc: A, f: F) -> Self
+    where
+        F: for<'gc> FnOnce(&Mutation<'gc>) -> Root<'gc, R>,
     {
         unsafe {
-            let context = Box::new(Context::new());
+            let context = BoxContext(Box::new_in(Context::new(), alloc));
             // Note - we cast the `&Mutation` to a `'static` lifetime here,
             // instead of transmuting the root type returned by `f`. Transmuting the root
             // type is allowed in nightly versions of rust
@@ -142,21 +194,21 @@ where
             // but is not yet stable. Casting the `&Mutation` is completely invisible
             // to the callback `f` (since it needs to handle an arbitrary lifetime),
             // and lets us stay compatible with older versions of Rust
-            let mc: &'static Mutation<'_> = &*(context.mutation_context() as *const _);
-            let root: Root<'static, R> = f(mc);
+            let mc: Mutation<'_> = context.mutation_context(Box::allocator(&context) as _);
+            let root: Root<'static, R> = f(&mc);
             Arena { context, root }
         }
     }
 
     /// Similar to `new`, but allows for constructor that can fail.
-    pub fn try_new<F, E>(f: F) -> Result<Arena<R>, E>
+    pub fn try_new_in<F, E>(alloc: A, f: F) -> Result<Self, E>
     where
-        F: for<'gc> FnOnce(&'gc Mutation<'gc>) -> Result<Root<'gc, R>, E>,
+        F: for<'gc> FnOnce(&Mutation<'gc>) -> Result<Root<'gc, R>, E>,
     {
         unsafe {
-            let context = Box::new(Context::new());
-            let mc: &'static Mutation<'_> = &*(context.mutation_context() as *const _);
-            let root: Root<'static, R> = f(mc)?;
+            let context = BoxContext(Box::new_in(Context::new(), alloc));
+            let mc: Mutation<'_> = context.mutation_context(Box::allocator(&context) as _);
+            let root: Root<'static, R> = f(&mc)?;
             Ok(Arena { context, root })
         }
     }
@@ -164,16 +216,18 @@ where
     #[inline]
     pub fn map_root<R2>(
         mut self,
-        f: impl for<'gc> FnOnce(&'gc Mutation<'gc>, Root<'gc, R>) -> Root<'gc, R2>,
-    ) -> Arena<R2>
+        f: impl for<'gc> FnOnce(&Mutation<'gc>, Root<'gc, R>) -> Root<'gc, R2>,
+    ) -> Arena<R2, A>
     where
         R2: for<'a> Rootable<'a>,
         for<'a> Root<'a, R2>: Sized,
     {
         self.context.root_barrier();
         let new_root: Root<'static, R2> = unsafe {
-            let mc: &'static Mutation<'_> = &*(self.context.mutation_context() as *const _);
-            f(mc, self.root)
+            let mc: Mutation<'_> = self
+                .context
+                .mutation_context(Box::allocator(&self.context) as _);
+            f(&mc, self.root)
         };
         Arena {
             context: self.context,
@@ -184,16 +238,18 @@ where
     #[inline]
     pub fn try_map_root<R2, E>(
         mut self,
-        f: impl for<'gc> FnOnce(&'gc Mutation<'gc>, Root<'gc, R>) -> Result<Root<'gc, R2>, E>,
-    ) -> Result<Arena<R2>, E>
+        f: impl for<'gc> FnOnce(&Mutation<'gc>, Root<'gc, R>) -> Result<Root<'gc, R2>, E>,
+    ) -> Result<Arena<R2, A>, E>
     where
         R2: for<'a> Rootable<'a>,
         for<'a> Root<'a, R2>: Sized,
     {
         self.context.root_barrier();
         let new_root: Root<'static, R2> = unsafe {
-            let mc: &'static Mutation<'_> = &*(self.context.mutation_context() as *const _);
-            f(mc, self.root)?
+            let mc: Mutation<'_> = self
+                .context
+                .mutation_context(Box::allocator(&self.context) as _);
+            f(&mc, self.root)?
         };
         Ok(Arena {
             context: self.context,
@@ -202,23 +258,25 @@ where
     }
 }
 
-impl<R> Arena<R>
+impl<R, A: Allocator> Arena<R, A>
 where
     R: for<'a> Rootable<'a>,
 {
     /// The primary means of interacting with a garbage collected arena. Accepts a callback which
-    /// receives a `&Mutation<'gc>` and a reference to the root, and can return any non garbage
+    /// receives a `Mutation<'gc>` and a reference to the root, and can return any non garbage
     /// collected value. The callback may "mutate" any part of the object graph during this call,
     /// but no garbage collection will take place during this method.
     #[inline]
     pub fn mutate<F, T>(&self, f: F) -> T
     where
-        F: for<'gc> FnOnce(&'gc Mutation<'gc>, &'gc Root<'gc, R>) -> T,
+        F: for<'gc> FnOnce(&Mutation<'gc>, &Root<'gc, R>) -> T,
     {
         unsafe {
-            let mc: &'static Mutation<'_> = &*(self.context.mutation_context() as *const _);
+            let mc: Mutation<'_> = self
+                .context
+                .mutation_context(Box::allocator(&self.context) as _);
             let root: &'static Root<'_, R> = &*(&self.root as *const _);
-            f(mc, root)
+            f(&mc, root)
         }
     }
 
@@ -227,13 +285,15 @@ where
     #[inline]
     pub fn mutate_root<F, T>(&mut self, f: F) -> T
     where
-        F: for<'gc> FnOnce(&'gc Mutation<'gc>, &'gc mut Root<'gc, R>) -> T,
+        F: for<'gc> FnOnce(&Mutation<'gc>, &mut Root<'gc, R>) -> T,
     {
         self.context.root_barrier();
         unsafe {
-            let mc: &'static Mutation<'_> = &*(self.context.mutation_context() as *const _);
+            let mc: Mutation<'_> = self
+                .context
+                .mutation_context(Box::allocator(&self.context) as _);
             let root: &'static mut Root<'_, R> = &mut *(&mut self.root as *mut _);
-            f(mc, root)
+            f(&mc, root)
         }
     }
 
@@ -259,7 +319,7 @@ where
     }
 }
 
-impl<R> Arena<R>
+impl<R, A: Allocator> Arena<R, A>
 where
     R: for<'a> Rootable<'a>,
     for<'a> Root<'a, R>: Collect<'a>,
@@ -278,8 +338,9 @@ where
     #[inline]
     pub fn collect_debt(&mut self) {
         unsafe {
+            let alloc = core::ptr::from_ref(Box::allocator(&self.context) as _);
             self.context
-                .do_collection(&self.root, RunUntil::PayDebt, Stop::Full);
+                .do_collection(&self.root, RunUntil::PayDebt, Stop::Full, &*alloc);
         }
     }
 
@@ -293,10 +354,11 @@ where
     /// [`CollectionPhase::Marked`]), then a [`MarkedArena`] object will be returned to allow
     /// you to examine the state of the fully marked arena.
     #[inline]
-    pub fn mark_debt(&mut self) -> Option<MarkedArena<'_, R>> {
+    pub fn mark_debt(&mut self) -> Option<MarkedArena<'_, R, A>> {
         unsafe {
+            let alloc = core::ptr::from_ref(Box::allocator(&self.context) as _);
             self.context
-                .do_collection(&self.root, RunUntil::PayDebt, Stop::FullyMarked);
+                .do_collection(&self.root, RunUntil::PayDebt, Stop::FullyMarked, &*alloc);
         }
 
         if self.context.phase() == Phase::Mark && !self.context.gray_remaining() {
@@ -315,10 +377,11 @@ where
     /// This method will always fully mark the arena and return a [`MarkedArena`] object as long as
     /// the current phase is not [`CollectionPhase::Sweeping`].
     #[inline]
-    pub fn finish_marking(&mut self) -> Option<MarkedArena<'_, R>> {
+    pub fn finish_marking(&mut self) -> Option<MarkedArena<'_, R, A>> {
         unsafe {
+            let alloc = core::ptr::from_ref(Box::allocator(&self.context) as _);
             self.context
-                .do_collection(&self.root, RunUntil::Stop, Stop::FullyMarked);
+                .do_collection(&self.root, RunUntil::Stop, Stop::FullyMarked, &*alloc);
         }
 
         if self.context.phase() == Phase::Mark && !self.context.gray_remaining() {
@@ -341,8 +404,10 @@ where
     #[inline]
     pub fn cycle_debt(&mut self) {
         unsafe {
+            let alloc = core::ptr::from_ref(Box::allocator(&self.context) as _);
+
             self.context
-                .do_collection(&self.root, RunUntil::PayDebt, Stop::FinishCycle);
+                .do_collection(&self.root, RunUntil::PayDebt, Stop::FinishCycle, &*alloc);
         }
     }
 
@@ -353,15 +418,16 @@ where
     #[inline]
     pub fn finish_cycle(&mut self) {
         unsafe {
+            let alloc = core::ptr::from_ref(Box::allocator(&self.context) as _);
             self.context
-                .do_collection(&self.root, RunUntil::Stop, Stop::FinishCycle);
+                .do_collection(&self.root, RunUntil::Stop, Stop::FinishCycle, &*alloc);
         }
     }
 }
 
-pub struct MarkedArena<'a, R: for<'b> Rootable<'b>>(&'a mut Arena<R>);
+pub struct MarkedArena<'a, R: for<'b> Rootable<'b>, A: Allocator = Global>(&'a mut Arena<R, A>);
 
-impl<'a, R> MarkedArena<'a, R>
+impl<'a, R, A: Allocator> MarkedArena<'a, R, A>
 where
     R: for<'b> Rootable<'b>,
     for<'b> Root<'b, R>: Collect<'b>,
@@ -377,13 +443,15 @@ where
     #[inline]
     pub fn finalize<F, T>(self, f: F) -> T
     where
-        F: for<'gc> FnOnce(&'gc Finalization<'gc>, &'gc Root<'gc, R>) -> T,
+        F: for<'gc> FnOnce(&Finalization<'gc>, &Root<'gc, R>) -> T,
     {
         unsafe {
-            let mc: &'static Finalization<'_> =
-                &*(self.0.context.finalization_context() as *const _);
+            let mc: Finalization<'_> = self
+                .0
+                .context
+                .finalization_context(Box::allocator(&self.0.context) as _);
             let root: &'static Root<'_, R> = &*(&self.0.root as *const _);
-            f(mc, root)
+            f(&mc, root)
         }
     }
 
@@ -392,9 +460,10 @@ where
     #[inline]
     pub fn start_sweeping(self) {
         unsafe {
+            let alloc = core::ptr::from_ref(Box::allocator(&self.0.context) as _);
             self.0
                 .context
-                .do_collection(&self.0.root, RunUntil::Stop, Stop::AtSweep);
+                .do_collection(&self.0.root, RunUntil::Stop, Stop::AtSweep, &*alloc);
         }
         assert_eq!(self.0.context.phase(), Phase::Sweep);
     }
@@ -409,10 +478,18 @@ where
 /// `gc-arena`, it is not very useful on its own.
 pub fn rootless_mutate<F, R>(f: F) -> R
 where
-    F: for<'gc> FnOnce(&'gc Mutation<'gc>) -> R,
+    F: for<'gc> FnOnce(&Mutation<'gc>) -> R,
 {
+    struct DropGuard(Context);
+
+    impl Drop for DropGuard {
+        fn drop(&mut self) {
+            unsafe { self.0.drop(&Global) }
+        }
+    }
+
     unsafe {
-        let context = Context::new();
-        f(context.mutation_context())
+        let context = DropGuard(Context::new());
+        f(&context.0.mutation_context(&Global))
     }
 }

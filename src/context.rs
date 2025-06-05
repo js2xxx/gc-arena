@@ -1,10 +1,11 @@
 use core::{
+    alloc::Allocator,
     cell::Cell,
     cmp::Ordering::Greater,
-    marker::Unsize,
+    marker::{PhantomData, Unsize},
     mem,
     ops::{ControlFlow, Deref, DerefMut},
-    ptr::{NonNull, Pointee},
+    ptr::Pointee,
 };
 
 use crate::{
@@ -16,9 +17,9 @@ use crate::{
 
 /// Handle value given by arena callbacks during construction and mutation. Allows allocating new
 /// `Gc` pointers and internally mutating values held by `Gc` pointers.
-#[repr(transparent)]
 pub struct Mutation<'gc> {
-    context: Context,
+    context: &'gc Context,
+    alloc: &'gc dyn Allocator,
     _invariant: Invariant<'gc>,
 }
 
@@ -102,7 +103,7 @@ impl<'gc> Mutation<'gc> {
         T: 'gc + Collect<'gc> + ?Sized,
         <T as Pointee>::Metadata: MetaLayout<T>,
     {
-        self.context.allocate::<T, false>(metadata)
+        self.context.allocate::<T, false>(metadata, self.alloc)
     }
 
     #[inline]
@@ -115,7 +116,8 @@ impl<'gc> Mutation<'gc> {
         U: ?Sized,
         <U as Pointee>::Metadata: MetaLayout<U>,
     {
-        self.context.allocate_unsize::<T, U, false>(metadata)
+        self.context
+            .allocate_unsize::<T, U, false>(metadata, self.alloc)
     }
 
     #[inline]
@@ -128,18 +130,13 @@ impl<'gc> Mutation<'gc> {
 ///
 /// Derefs to `Mutation<'gc>` to allow for arbitrary mutation, but adds additional powers to examine
 /// the state of the fully marked arena.
-#[repr(transparent)]
-pub struct Finalization<'gc> {
-    context: Context,
-    _invariant: Invariant<'gc>,
-}
+pub struct Finalization<'gc>(Mutation<'gc>);
 
 impl<'gc> Deref for Finalization<'gc> {
     type Target = Mutation<'gc>;
 
     fn deref(&self) -> &Self::Target {
-        // SAFETY: Finalization and Mutation are #[repr(transparent)]
-        unsafe { mem::transmute::<&Self, &Mutation>(self) }
+        &self.0
     }
 }
 
@@ -224,14 +221,14 @@ pub(crate) struct Context {
     gray_again: Cell<Option<GcBox>>,
 }
 
-impl Drop for Context {
-    fn drop(&mut self) {
-        struct DropAll<'a>(&'a Metrics, Option<GcBox>);
+impl Context {
+    pub(crate) unsafe fn drop(&mut self, a: &impl Allocator) {
+        struct DropAll<'a, A: Allocator>(&'a Metrics, Option<GcBox>, &'a A);
 
-        impl<'a> Drop for DropAll<'a> {
+        impl<'a, A: Allocator> Drop for DropAll<'a, A> {
             fn drop(&mut self) {
                 if let Some(gc_box) = self.1.take() {
-                    let mut drop_resume = DropAll(self.0, Some(gc_box));
+                    let mut drop_resume = DropAll(self.0, Some(gc_box), self.2);
                     while let Some(mut gc_box) = drop_resume.1.take() {
                         let header = gc_box.header();
                         drop_resume.1 = header.next();
@@ -242,7 +239,7 @@ impl Drop for Context {
                                 gc_box.drop_in_place();
                                 self.0.mark_gc_dropped(gc_size);
                             }
-                            gc_box.dealloc();
+                            gc_box.dealloc(self.2);
                             self.0.mark_gc_freed(gc_size);
                         }
                     }
@@ -251,11 +248,9 @@ impl Drop for Context {
         }
 
         let cx = PhaseGuard::enter(self, Some(Phase::Drop));
-        DropAll(&cx.metrics, cx.all.get());
+        DropAll(&cx.metrics, cx.all.get(), a);
     }
-}
 
-impl Context {
     pub(crate) unsafe fn new() -> Context {
         let metrics = Metrics::new();
         Context {
@@ -273,15 +268,21 @@ impl Context {
     }
 
     #[inline]
-    pub(crate) unsafe fn mutation_context<'gc>(&self) -> &Mutation<'gc> {
+    pub(crate) unsafe fn mutation_context<'gc>(&self, a: &dyn Allocator) -> Mutation<'gc> {
         // SAFETY: `Mutation` is a transparent wrapper around `Context`.
-        unsafe { mem::transmute::<&Self, &Mutation>(self) }
+        unsafe {
+            Mutation {
+                context: mem::transmute::<&Self, &'gc Self>(self),
+                alloc: mem::transmute::<&dyn Allocator, &'gc dyn Allocator>(a),
+                _invariant: PhantomData,
+            }
+        }
     }
 
     #[inline]
-    pub(crate) unsafe fn finalization_context<'gc>(&self) -> &Finalization<'gc> {
+    pub(crate) unsafe fn finalization_context<'gc>(&self, a: &dyn Allocator) -> Finalization<'gc> {
         // SAFETY: `Finalization` is a transparent wrapper around `Context`.
-        unsafe { mem::transmute::<&Self, &Finalization>(self) }
+        unsafe { Finalization(self.mutation_context(a)) }
     }
 
     #[inline]
@@ -320,6 +321,7 @@ impl Context {
         root: &R,
         run_until: RunUntil,
         stop: Stop,
+        a: &dyn Allocator,
     ) {
         let mut cx = PhaseGuard::enter(self, None);
 
@@ -356,7 +358,7 @@ impl Context {
                 Phase::Sweep => {
                     if stop <= Stop::AtSweep {
                         break;
-                    } else if cx.sweep_one().is_break() {
+                    } else if cx.sweep_one(a).is_break() {
                         // Begin a new cycle.
                         //
                         // We reset our debt if we have done an entire collection cycle (marking and
@@ -396,19 +398,24 @@ impl Context {
         cx.log_progress("GC: yielding...");
     }
 
-    fn allocate<'gc, T, const ZEROED: bool>(&self, metadata: <T as Pointee>::Metadata) -> GcBox
+    fn allocate<'gc, T, const ZEROED: bool>(
+        &self,
+        metadata: <T as Pointee>::Metadata,
+        a: &dyn Allocator,
+    ) -> GcBox
     where
         T: Collect<'gc> + ?Sized,
         <T as Pointee>::Metadata: MetaLayout<T>,
     {
         let header = GcBoxHeader::new::<T>();
         // SAFETY: `T == U`.
-        unsafe { self.allocate_impl::<T, T, ZEROED>(metadata, header) }
+        unsafe { self.allocate_impl::<T, T, ZEROED>(metadata, header, a) }
     }
 
     fn allocate_unsize<'gc, T, U, const ZEROED: bool>(
         &self,
         metadata: <U as Pointee>::Metadata,
+        a: &dyn Allocator,
     ) -> GcBox
     where
         T: Collect<'gc> + Unsize<U> + ?Sized,
@@ -416,7 +423,7 @@ impl Context {
         <U as Pointee>::Metadata: MetaLayout<U>,
     {
         let header = GcBoxHeader::new_unsize::<T, U>();
-        unsafe { self.allocate_impl::<T, U, ZEROED>(metadata, header) }
+        unsafe { self.allocate_impl::<T, U, ZEROED>(metadata, header, a) }
     }
 
     /// # Safety
@@ -426,6 +433,7 @@ impl Context {
         &self,
         metadata: <U as Pointee>::Metadata,
         header: GcBoxHeader,
+        a: &dyn Allocator,
     ) -> GcBox
     where
         T: Collect<'gc> + ?Sized,
@@ -441,21 +449,20 @@ impl Context {
 
         let gc_box = unsafe {
             let mem = if ZEROED {
-                ::alloc::alloc::alloc_zeroed(alloc_layout)
+                a.allocate_zeroed(alloc_layout)
             } else {
-                ::alloc::alloc::alloc(alloc_layout)
+                a.allocate(alloc_layout)
             };
-            if mem.is_null() {
+            let Ok(mem) = mem else {
                 ::alloc::alloc::handle_alloc_error(alloc_layout);
-            }
+            };
 
             mem.cast::<<U as Pointee>::Metadata>().write(metadata);
 
             let uninit = mem.byte_add(offset).cast::<GcBoxHeader>();
             uninit.write(header);
 
-            let ptr = NonNull::new_unchecked(uninit);
-            GcBox::from_raw(ptr.cast())
+            GcBox::from_raw(uninit.cast())
         };
 
         self.all.set(Some(gc_box));
@@ -709,7 +716,7 @@ impl Context {
         }
     }
 
-    fn sweep_one(&mut self) -> ControlFlow<()> {
+    fn sweep_one(&mut self, a: &dyn Allocator) -> ControlFlow<()> {
         let Some(mut sweep) = self.sweep else {
             self.sweep_prev.set(None);
             return ControlFlow::Break(());
@@ -744,7 +751,7 @@ impl Context {
                         sweep.drop_in_place();
                         self.metrics.mark_gc_dropped(sweep_size);
                     }
-                    sweep.dealloc();
+                    sweep.dealloc(a);
                     self.metrics.mark_gc_freed(sweep_size);
                 }
             }
