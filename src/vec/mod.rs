@@ -1153,6 +1153,9 @@ mod tests {
 
             let v3 = crate::vec![mc => 3, 4, 5, 6, 7];
             assert_eq!(v3, [3, 4, 5, 6, 7]);
+
+            let v4 = crate::vec![mc => (); 100];
+            assert_eq!(v4.capacity(), usize::MAX);
         })
     }
 }

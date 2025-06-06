@@ -12,7 +12,7 @@ use crate::{
     collect::{Collect, Trace},
     gc::{Gc, Weak},
     metrics::Metrics,
-    types::{GcBox, GcBoxHeader, GcBoxInner, GcColor, Invariant, MetaLayout},
+    types::{GcBox, GcBoxHeader, GcColor, Invariant, MetaLayout},
 };
 
 /// Handle value given by arena callbacks during construction and mutation. Allows allocating new
@@ -445,7 +445,7 @@ impl Context {
         header.set_needs_trace(T::NEEDS_TRACE);
 
         let (alloc_layout, offset) =
-            GcBoxInner::<U>::box_layout(metadata).expect("layout calculation failed");
+            GcBox::box_layout::<U>(metadata).expect("layout calculation failed");
 
         let gc_box = unsafe {
             let mem = if ZEROED {

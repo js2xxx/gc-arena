@@ -38,6 +38,26 @@ impl<Dyn: ?Sized, T: ?Sized + Pointee<Metadata = Self>> MetaLayout<T> for DynMet
 pub(crate) struct GcBox(NonNull<GcBoxInner<()>>);
 
 impl GcBox {
+    pub(crate) fn box_layout<T>(metadata: T::Metadata) -> Result<(Layout, usize), LayoutError>
+    where
+        T: ?Sized + Pointee<Metadata: MetaLayout<T>>,
+    {
+        let value = metadata.layout()?;
+        let header = Layout::new::<GcBoxHeader>();
+        let metadata = Layout::new::<T::Metadata>();
+
+        let (layout, offset) = metadata.extend(header)?;
+        let (layout, _) = layout.extend(value)?;
+        Ok((layout, offset))
+    }
+
+    const fn metadata_offset<T: ?Sized>() -> usize {
+        match Layout::new::<<T as Pointee>::Metadata>().extend(Layout::new::<GcBoxHeader>()) {
+            Ok((_, offset)) => offset,
+            Err(_) => panic!("Layout calculation failed"),
+        }
+    }
+
     /// # Safety
     ///
     /// `ptr` must point to a valid `GcBoxInner`.
@@ -75,7 +95,7 @@ impl GcBox {
     }
 
     unsafe fn metadata<T: ?Sized>(&self) -> <T as Pointee>::Metadata {
-        let offset = GcBoxInner::<T>::METADATA_OFFSET;
+        let offset = const { Self::metadata_offset::<T>() };
         unsafe {
             let ptr = self.0.byte_sub(offset);
             ptr.cast().read()
@@ -352,7 +372,7 @@ impl CollectVTable {
     {
         Self {
             box_layout: |erased| unsafe {
-                GcBoxInner::<T>::box_layout(erased.metadata::<T>()).unwrap_unchecked()
+                GcBox::box_layout::<T>(erased.metadata::<T>()).unwrap_unchecked()
             },
             drop_value: |erased| unsafe {
                 ptr::drop_in_place(erased.unerased_value::<T>());
@@ -374,7 +394,7 @@ impl CollectVTable {
     {
         Self {
             box_layout: |erased| unsafe {
-                GcBoxInner::<U>::box_layout(erased.metadata::<U>()).unwrap_unchecked()
+                GcBox::box_layout::<U>(erased.metadata::<U>()).unwrap_unchecked()
             },
             drop_value: |erased| unsafe {
                 ptr::drop_in_place(erased.unerased_value::<T>());
@@ -395,29 +415,6 @@ pub(crate) struct GcBoxInner<T: ?Sized> {
     pub(crate) header: GcBoxHeader,
     /// The typed value stored in this `GcBox`.
     pub(crate) value: mem::ManuallyDrop<T>,
-}
-
-impl<T: ?Sized> GcBoxInner<T> {
-    pub(crate) const METADATA_OFFSET: usize =
-        match Layout::new::<<T as Pointee>::Metadata>().extend(Layout::new::<GcBoxHeader>()) {
-            Ok((_, offset)) => offset,
-            Err(_) => panic!("Layout calculation failed"),
-        };
-}
-
-impl<T: ?Sized + Pointee> GcBoxInner<T> {
-    pub(crate) fn box_layout(metadata: T::Metadata) -> Result<(Layout, usize), LayoutError>
-    where
-        T::Metadata: MetaLayout<T>,
-    {
-        let value = metadata.layout()?;
-        let header = Layout::new::<GcBoxHeader>();
-        let metadata = Layout::new::<T::Metadata>();
-
-        let (layout, offset) = metadata.extend(header)?;
-        let (layout, _) = layout.extend(value)?;
-        Ok((layout, offset))
-    }
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]

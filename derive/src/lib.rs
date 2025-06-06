@@ -288,7 +288,7 @@ decl_derive! {
     /// - `#[collect(unsafe_drop)]` - The most versatile tracing derive strategy which allows a
     ///   custom drop implementation. However, this strategy can lead to unsoundness if care is not
     ///   taken (see the above explanation of `Drop` interactions).
-    /// 
+    ///
     /// If no strategy is provided, then `#[collect(no_drop)]` is used by default.
     ///
     /// The `collect` attribute also accepts a number of optional configuration settings:
