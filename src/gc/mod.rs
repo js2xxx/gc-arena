@@ -16,7 +16,7 @@ use crate::{
     barrier::{Unlock, Write},
     collect::{Collect, Static, Trace},
     context::Mutation,
-    types::{GcBox, GcColor, Invariant, MetaLayout},
+    types::{GcBox, GcColor, Invariant, Metadata},
     vec::Vec,
 };
 
@@ -108,9 +108,8 @@ impl<'gc, T: Collect<'gc> + 'gc> Gc<'gc, T> {
 
     pub fn new_unsize<Dyn>(mc: &Mutation<'gc>, t: T) -> Gc<'gc, Dyn>
     where
-        T: Collect<'gc> + Unsize<Dyn>,
-        Dyn: ?Sized + 'gc,
-        <Dyn as Pointee>::Metadata: MetaLayout<Dyn>,
+        T: Unsize<Dyn>,
+        Dyn: 'gc + ?Sized + Pointee<Metadata: Metadata<'gc, T>>,
     {
         Unique::new_unsize::<Dyn>(mc, t).into_gc()
     }

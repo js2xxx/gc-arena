@@ -14,7 +14,7 @@ use crate::{
     Gc,
     collect::{Collect, Trace},
     context::Mutation,
-    types::{GcBox, Invariant, MetaLayout},
+    types::{GcBox, Invariant, Metadata},
     vec::Vec,
 };
 
@@ -49,7 +49,7 @@ impl<'gc, T: Display + ?Sized + 'gc> Display for Unique<'gc, T> {
     }
 }
 
-unsafe impl<'gc, T: Collect<'gc> + ?Sized + 'gc> Collect<'gc> for Unique<'gc, T> {
+unsafe impl<'gc, T: ?Sized + 'gc> Collect<'gc> for Unique<'gc, T> {
     const NEEDS_TRACE: bool = true;
 
     fn trace<U: Trace<'gc>>(&self, cc: &mut U) {
@@ -120,7 +120,7 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, T> {
         // The shorthand is used here to avoid an extra assignment to
         // the underlying VTable.
 
-        let ptr = mc.allocate::<T, false>(());
+        let ptr = mc.allocate::<T, (), false>(());
         // SAFETY: `ptr` is a valid uninit pointer to `T`.
         unsafe { ptr.unerased_value::<T>().write(t) };
         Unique {
@@ -133,16 +133,13 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, T> {
     #[inline]
     pub fn new_unsize<Dyn>(mc: &Mutation<'gc>, t: T) -> Unique<'gc, Dyn>
     where
-        T: Collect<'gc> + Unsize<Dyn>,
-        Dyn: ?Sized + 'gc,
-        <Dyn as Pointee>::Metadata: MetaLayout<Dyn>,
+        T: Unsize<Dyn>,
+        Dyn: 'gc + ?Sized + Pointee<Metadata: Metadata<'gc, T>>,
     {
-        let ptr = core::ptr::from_ref(&t) as *const Dyn;
-        let (_, metadata) = ptr.to_raw_parts();
-
-        let gc_box = mc.allocate_unsize::<T, Dyn, false>(metadata);
+        let metadata = core::ptr::metadata(&t as &Dyn);
+        let gc_box = mc.allocate::<T, _, false>(metadata);
         // SAFETY: `ptr` is a uninit pointer to `Dyn` which can receive a `T`.
-        unsafe { gc_box.unerased_value::<T>().write(t) };
+        unsafe { gc_box.unerased_value::<Dyn>().cast::<T>().write(t) };
 
         Unique {
             ptr: gc_box,
@@ -171,7 +168,7 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, T> {
     #[inline]
     pub fn new_uninit(mc: &Mutation<'gc>) -> Unique<'gc, MaybeUninit<T>> {
         Unique {
-            ptr: mc.allocate::<MaybeUninit<T>, false>(()),
+            ptr: mc.allocate::<MaybeUninit<T>, (), false>(()),
             _invariant: PhantomData,
         }
     }
@@ -193,7 +190,7 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, T> {
     #[inline]
     pub fn new_zeroed(mc: &Mutation<'gc>) -> Unique<'gc, MaybeUninit<T>> {
         let ret = Unique {
-            ptr: mc.allocate::<MaybeUninit<T>, true>(()),
+            ptr: mc.allocate::<MaybeUninit<T>, (), true>(()),
             _invariant: PhantomData,
         };
         #[cfg(not(miri))]
@@ -233,7 +230,7 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, [T]> {
     /// ```
     pub fn new_uninit_slice(mc: &Mutation<'gc>, len: usize) -> Unique<'gc, [MaybeUninit<T>]> {
         Unique {
-            ptr: mc.allocate::<[MaybeUninit<T>], false>(len),
+            ptr: mc.allocate::<[MaybeUninit<T>], usize, false>(len),
             _invariant: PhantomData,
         }
     }
@@ -252,7 +249,7 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, [T]> {
     /// ```
     pub fn new_zeroed_slice(mc: &Mutation<'gc>, len: usize) -> Unique<'gc, [MaybeUninit<T>]> {
         let ret: Unique<'gc, [MaybeUninit<T>]> = Unique {
-            ptr: mc.allocate::<[MaybeUninit<T>], true>(len),
+            ptr: mc.allocate::<[MaybeUninit<T>], usize, true>(len),
             _invariant: PhantomData,
         };
         #[cfg(not(miri))]
@@ -302,7 +299,8 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, MaybeUninit<T>> {
     #[inline]
     pub unsafe fn assume_init(self) -> Unique<'gc, T> {
         // SAFETY: The caller guarantees that the value is initialized.
-        unsafe { self.ptr.header().reset_vtable::<T>() };
+        unsafe { self.ptr.header().reset_vtable::<T, ()>() };
+        self.ptr.header().set_needs_trace(T::NEEDS_TRACE);
         Unique {
             ptr: self.ptr,
             _invariant: PhantomData,
@@ -350,7 +348,8 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, [MaybeUninit<T>]> {
     #[inline]
     pub unsafe fn assume_init(self) -> Unique<'gc, [T]> {
         // SAFETY: The caller guarantees that the slice is initialized.
-        unsafe { self.ptr.header().reset_vtable::<[T]>() };
+        unsafe { self.ptr.header().reset_vtable::<[T], usize>() };
+        self.ptr.header().set_needs_trace(<[T]>::NEEDS_TRACE);
         Unique {
             ptr: self.ptr,
             _invariant: PhantomData,
@@ -516,7 +515,7 @@ impl<'gc, T: ?Sized + 'gc> Unique<'gc, T> {
     /// Very few guarantees are given about this pointer, except that it is properly
     /// aligned, points to a valid instance of `T`, and may be written to.
     pub fn as_mut_ptr(this: &mut Unique<'gc, T>) -> *mut T {
-        // SAFETY: `Unique` is guaranteed to contain a pointer to a valid instance of a `GcBoxInner<T>`.
+        // SAFETY: `Unique` is guaranteed to contain a pointer to a valid instance of a GC box typed `T`.
         unsafe { this.ptr.unerased_value::<T>() }
     }
 
@@ -525,7 +524,7 @@ impl<'gc, T: ?Sized + 'gc> Unique<'gc, T> {
     /// Very few guarantees are given about this pointer, except that it is properly
     /// aligned, and points to a valid instance of `T`
     pub fn as_ptr(this: &Unique<'gc, T>) -> *const T {
-        // SAFETY: `Unique` is guaranteed to contain a pointer to a valid instance of a `GcBoxInner<T>`.
+        // SAFETY: `Unique` is guaranteed to contain a pointer to a valid instance of a GC box typed `T`.
         unsafe { this.ptr.unerased_value::<T>() }
     }
 
@@ -533,7 +532,7 @@ impl<'gc, T: ?Sized + 'gc> Unique<'gc, T> {
     ///
     /// The pointer is guaranteed to be valid only in the current collection phase.
     pub fn into_raw(this: Unique<'gc, T>) -> *mut T {
-        // SAFETY: `Unique` is guaranteed to contain a pointer to a valid instance of a `GcBoxInner<T>`.
+        // SAFETY: `Unique` is guaranteed to contain a pointer to a valid instance of a GC box typed `T`.
         unsafe { this.ptr.unerased_value::<T>() }
     }
 
@@ -541,9 +540,9 @@ impl<'gc, T: ?Sized + 'gc> Unique<'gc, T> {
     ///
     /// # Safety
     ///
-    /// The given pointer must have been obtained from [`Unique::as_ptr`] or
-    /// [`Gc::as_ptr`]. There must also exist no other garbage collected pointers
-    /// which point to the same allocation. This is always the case for [`Unique::as_ptr`].
+    /// The given pointer must have been obtained from [`Unique::as_ptr`], [`Unique::into_raw`],
+    /// or [`Gc::as_ptr`]. There must also exist no other garbage collected pointers
+    /// which point to the same allocation.
     pub unsafe fn from_raw(raw: *mut T) -> Unique<'gc, T> {
         Unique {
             // SAFETY: `raw` is valid and aligned guaranteed by the caller.
@@ -564,7 +563,8 @@ impl<'gc, T: 'gc> Unique<'gc, [T]> {
         let () = Vec::<'gc, T>::ASSERT_NO_DROP;
         // SAFETY: the elements is handled separately in `Vec`s, so
         // assign the VTable to uninitalized states.
-        unsafe { self.ptr.header().reset_vtable::<[MaybeUninit<T>]>() };
+        unsafe { self.ptr.header().reset_vtable::<[MaybeUninit<T>], usize>() };
+        self.ptr.header().set_needs_trace(false);
 
         let (ptr, len) = Self::into_raw(self).to_raw_parts();
         // SAFETY: `ptr` is valid and aligned guaranteed by the caller.

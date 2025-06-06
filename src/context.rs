@@ -2,17 +2,16 @@ use core::{
     alloc::Allocator,
     cell::Cell,
     cmp::Ordering::Greater,
-    marker::{PhantomData, Unsize},
+    marker::PhantomData,
     mem,
     ops::{ControlFlow, Deref, DerefMut},
-    ptr::Pointee,
 };
 
 use crate::{
     collect::{Collect, Trace},
     gc::{Gc, Weak},
     metrics::Metrics,
-    types::{GcBox, GcBoxHeader, GcColor, Invariant, MetaLayout},
+    types::{GcBox, GcBoxHeader, GcColor, Invariant, Metadata},
 };
 
 /// Handle value given by arena callbacks during construction and mutation. Allows allocating new
@@ -95,29 +94,12 @@ impl<'gc> Mutation<'gc> {
     }
 
     #[inline]
-    pub(crate) fn allocate<T, const ZEROED: bool>(
-        &self,
-        metadata: <T as Pointee>::Metadata,
-    ) -> GcBox
+    pub(crate) fn allocate<T, M, const ZEROED: bool>(&self, metadata: M) -> GcBox
     where
-        T: 'gc + Collect<'gc> + ?Sized,
-        <T as Pointee>::Metadata: MetaLayout<T>,
+        T: 'gc + ?Sized,
+        M: Metadata<'gc, T>,
     {
-        self.context.allocate::<T, false>(metadata, self.alloc)
-    }
-
-    #[inline]
-    pub(crate) fn allocate_unsize<T, U, const ZEROED: bool>(
-        &self,
-        metadata: <U as Pointee>::Metadata,
-    ) -> GcBox
-    where
-        T: Collect<'gc> + Unsize<U> + ?Sized,
-        U: ?Sized,
-        <U as Pointee>::Metadata: MetaLayout<U>,
-    {
-        self.context
-            .allocate_unsize::<T, U, false>(metadata, self.alloc)
+        self.context.allocate::<T, M, false>(metadata, self.alloc)
     }
 
     #[inline]
@@ -398,54 +380,18 @@ impl Context {
         cx.log_progress("GC: yielding...");
     }
 
-    fn allocate<'gc, T, const ZEROED: bool>(
-        &self,
-        metadata: <T as Pointee>::Metadata,
-        a: &dyn Allocator,
-    ) -> GcBox
+    fn allocate<'gc, T, M, const ZEROED: bool>(&self, metadata: M, a: &dyn Allocator) -> GcBox
     where
-        T: Collect<'gc> + ?Sized,
-        <T as Pointee>::Metadata: MetaLayout<T>,
+        T: ?Sized,
+        M: Metadata<'gc, T>,
     {
-        let header = GcBoxHeader::new::<T>();
-        // SAFETY: `T == U`.
-        unsafe { self.allocate_impl::<T, T, ZEROED>(metadata, header, a) }
-    }
-
-    fn allocate_unsize<'gc, T, U, const ZEROED: bool>(
-        &self,
-        metadata: <U as Pointee>::Metadata,
-        a: &dyn Allocator,
-    ) -> GcBox
-    where
-        T: Collect<'gc> + Unsize<U> + ?Sized,
-        U: ?Sized,
-        <U as Pointee>::Metadata: MetaLayout<U>,
-    {
-        let header = GcBoxHeader::new_unsize::<T, U>();
-        unsafe { self.allocate_impl::<T, U, ZEROED>(metadata, header, a) }
-    }
-
-    /// # Safety
-    ///
-    /// `T: Unsize<U>` or `T == U`.
-    unsafe fn allocate_impl<'gc, T, U, const ZEROED: bool>(
-        &self,
-        metadata: <U as Pointee>::Metadata,
-        header: GcBoxHeader,
-        a: &dyn Allocator,
-    ) -> GcBox
-    where
-        T: Collect<'gc> + ?Sized,
-        U: ?Sized,
-        <U as Pointee>::Metadata: MetaLayout<U>,
-    {
+        let header = GcBoxHeader::new::<T, M>();
         header.set_next(self.all.get());
         header.set_live(true);
-        header.set_needs_trace(T::NEEDS_TRACE);
+        header.set_needs_trace(metadata.needs_trace());
 
         let (alloc_layout, offset) =
-            GcBox::box_layout::<U>(metadata).expect("layout calculation failed");
+            GcBox::box_layout::<T, M>(metadata).expect("layout calculation failed");
 
         let gc_box = unsafe {
             let mem = if ZEROED {
@@ -457,8 +403,8 @@ impl Context {
                 ::alloc::alloc::handle_alloc_error(alloc_layout);
             };
 
-            let ptr = mem.byte_add(offset - size_of::<GcBoxHeader>() - size_of::<<U as Pointee>::Metadata>());
-            ptr.cast::<<U as Pointee>::Metadata>().write(metadata);
+            let ptr = mem.byte_add(offset - size_of::<GcBoxHeader>() - size_of::<M>());
+            ptr.cast::<M>().write(metadata);
 
             let ptr = mem.byte_add(offset - size_of::<GcBoxHeader>());
             ptr.cast::<GcBoxHeader>().write(header);
