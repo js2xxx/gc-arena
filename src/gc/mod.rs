@@ -26,11 +26,23 @@ mod weak;
 
 pub use self::{unique::Unique, weak::Weak};
 
-/// A garbage collected pointer to a type T. Implements Copy, and is implemented as a plain machine
-/// pointer. You can only allocate `Gc` pointers through a `&Mutation<'gc>` inside an arena type,
-/// and through "generativity" such `Gc` pointers may not escape the arena they were born in or
-/// be stored inside TLS. This, combined with correct `Collect` implementations, means that `Gc`
-/// pointers will never be dangling and are always safe to access.
+/// A garbage collected pointer to a type T.
+///
+/// Implements Copy, and is implemented as a plain machine pointer. You can only allocate `Gc`
+/// pointers through a [`&Mutation<'gc>`] inside an arena type, and through "generativity" such
+/// `Gc` pointers may not escape the arena they were born in or be stored inside TLS. This,
+/// combined with correct `Collect` implementations, means that `Gc` pointers will never be
+/// dangling and are always safe to access.
+/// 
+/// # Layout
+///
+/// The underlying pointer points directly to the value, so it can be safety [transmute]d when
+/// the type is [`Sized`]. However, since it is a **thin** pointer, it cannot be safely cast to
+/// the corresponding raw pointer when the type is `?Sized`. To obtain a raw pointer, use the
+/// [`Gc::as_ptr`] method, or [`Gc::to_raw_parts`] if the metadata is customed.
+///
+/// [transmute]: core::mem::transmute
+/// [`&Mutation<'gc>`]: crate::context::Mutation
 #[repr(transparent)]
 pub struct Gc<'gc, T: ?Sized + 'gc, M: 'gc = PtrMeta<T>> {
     pub(crate) ptr: GcBox,
@@ -49,7 +61,7 @@ where
 
 impl<'gc, 'a, T: ?Sized + 'gc + 'a, M: Metadata<'a, T>> Pointer for Gc<'gc, T, M> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Pointer::fmt(&M::addr(Gc::into_raw(*self)), fmt)
+        fmt::Pointer::fmt(&Gc::addr(*self), fmt)
     }
 }
 
@@ -326,8 +338,8 @@ impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: PtrMetadata<'a, T>> Gc<'gc, T, M> {
     ///
     /// # Safety
     ///
-    /// The given pointer must have been obtained from [`Gc::as_ptr`]. There must
-    /// also exist no other garbage collected pointers which point to the same allocation.
+    /// The given pointer must have been obtained from [`Gc::as_ptr`] within the same
+    /// mutation session.
     pub unsafe fn from_ptr(raw: *const T) -> Self {
         Gc {
             // SAFETY: `raw` is valid and aligned guaranteed by the caller.
@@ -351,16 +363,31 @@ impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: Metadata<'a, T>> Gc<'gc, T, M> {
     ///
     /// Very few guarantees are given about this pointer, except that it is properly
     /// aligned, and points to a valid instance of `T`
-    pub fn into_raw(this: Self) -> M::Ptr {
-        unsafe { this.ptr.unerase::<T, M>() }
+    pub fn addr(this: Self) -> NonNull<()> {
+        this.ptr.into_raw()
+    }
+
+    /// Returns the metadata associated with this `Gc` pointer.
+    ///
+    /// Similar to [`core::ptr::metadata`].
+    pub fn metadata(this: Self) -> M {
+        unsafe { this.ptr.metadata::<M>() }
+    }
+
+    /// Returns the raw pointer parts to the `Gc`'s contents.
+    ///
+    /// Very few guarantees are given about this pointer, except that it is properly
+    /// aligned, and points to a valid instance of `T`
+    pub fn to_raw_parts(this: Self) -> (NonNull<()>, M) {
+        (Self::addr(this), Self::metadata(this))
     }
 
     /// Constructs a `Gc` from a raw address.
     ///
     /// # Safety
     ///
-    /// The given pointer must have been obtained from [`Gc::into_raw`]. There must
-    /// also exist no other garbage collected pointers which point to the same allocation.
+    /// The given pointer must have been obtained from [`Gc::addr`] or [`Gc::to_raw_parts`]
+    /// within the same mutation session.
     pub unsafe fn from_raw(raw: NonNull<()>) -> Self {
         Gc {
             // SAFETY: `raw` is valid and aligned guaranteed by the caller.
@@ -375,7 +402,7 @@ impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: Metadata<'a, T>> Gc<'gc, T, M> {
     /// pointers.
     #[inline]
     pub fn ptr_eq(this: Self, other: Self) -> bool {
-        M::addr(Gc::into_raw(this)) == M::addr(Gc::into_raw(other))
+        Gc::addr(this) == Gc::addr(other)
     }
 
     /// Returns true when a pointer is *dead* during finalization. This is equivalent to

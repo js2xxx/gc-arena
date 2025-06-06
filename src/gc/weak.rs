@@ -107,12 +107,22 @@ impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: Metadata<'a, T>> Weak<'gc, T, M> {
     /// pointers.
     #[inline]
     pub fn ptr_eq(this: Self, other: Self) -> bool {
-        M::addr(this.into_raw()) == M::addr(other.into_raw())
+        this.addr() == other.addr()
     }
 
     #[inline]
-    pub fn into_raw(self) -> M::Ptr {
-        Gc::into_raw(self.inner)
+    pub fn addr(self) -> NonNull<()> {
+        Gc::addr(self.inner)
+    }
+
+    #[inline]
+    pub fn metadata(self) -> M {
+        Gc::metadata(self.inner)
+    }
+
+    #[inline]
+    pub fn to_raw_parts(self) -> (NonNull<()>, M) {
+        Gc::to_raw_parts(self.inner)
     }
 
     /// Retrieve a `Weak` from a raw pointer obtained from `Weak::as_raw`
@@ -139,7 +149,8 @@ impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: PtrMetadata<'a, T>> Weak<'gc, T, M> {
     /// Retrieve a `Weak` from a raw pointer obtained from `Weak::as_ptr`
     ///
     /// # Safety
-    /// The provided pointer must have been obtained from `Weak::as_ptr` or `Gc::as_ptr`, and
+    ///
+    /// The provided pointer must have been obtained from [`Weak::as_ptr`] or [`Gc::as_ptr`], and
     /// the pointer must not have been *fully* collected yet (it may be a dropped but valid weak
     /// pointer).
     #[inline]

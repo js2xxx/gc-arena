@@ -44,7 +44,7 @@ where
 
 impl<'gc, 'a, T: ?Sized + 'gc + 'a, M: Metadata<'a, T>> Pointer for Unique<'gc, T, M> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Pointer::fmt(&M::addr(Unique::as_raw(self)), fmt)
+        fmt::Pointer::fmt(&Unique::addr(self), fmt)
     }
 }
 
@@ -145,7 +145,7 @@ impl<'gc, T: ?Sized + Uninit + 'gc, M: 'gc> Unique<'gc, T, M> {
         #[cfg(miri)]
         {
             let mut ret = ret;
-            let addr = M::addr(Unique::as_raw_mut(&mut ret));
+            let addr = Unique::addr_mut(&mut ret);
             // SAFETY: The metadata is valid for this type.
             let size = unsafe { ret.ptr.metadata::<M>().layout().unwrap_unchecked().size() };
             // SAFETY: The memory is uninitialized and valid.
@@ -532,36 +532,38 @@ impl<'gc, T: ?Sized + 'gc> Unique<'gc, T> {
 }
 
 impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: Metadata<'a, T>> Unique<'gc, T, M> {
-    /// Returns a raw pointer to the `Unique`'s contents.
-    ///
-    /// Very few guarantees are given about this pointer, except that it is properly
-    /// aligned, and points to a valid instance of `T`
-    pub fn as_raw(this: &Self) -> M::Ptr {
-        unsafe { this.ptr.unerase::<T, M>() }
+    /// Returns the raw address of the `Unique`.
+    pub fn addr(this: &Self) -> NonNull<()> {
+        this.ptr.into_raw()
     }
 
-    /// Returns a raw mutable pointer to the `Unique`'s contents.
+    /// Returns the raw address of the `Unique`.
     ///
-    /// Very few guarantees are given about this pointer, except that it is properly
-    /// aligned, points to a valid instance of `T`, and may be written to.
-    pub fn as_raw_mut(this: &mut Self) -> M::Ptr {
-        unsafe { this.ptr.unerase::<T, M>() }
+    /// The mutable variant of [`Unique::addr`] exists for clarity of borrowing.
+    pub fn addr_mut(this: &mut Self) -> NonNull<()> {
+        this.ptr.into_raw()
+    }
+
+    /// Returns the metadata associated with the `Unique`.
+    pub fn metadata(this: &Self) -> M {
+        unsafe { this.ptr.metadata::<M>() }
     }
 
     /// Transforms the `Unique` into a raw pointer.
     ///
     /// The pointer is guaranteed to be valid only in the current collection phase.
-    pub fn into_raw(this: Self) -> M::Ptr {
-        unsafe { this.ptr.unerase::<T, M>() }
+    pub fn into_raw_parts(this: Self) -> (NonNull<()>, M) {
+        (Self::addr(&this), Self::metadata(&this))
     }
 
     /// Constructs a `Unique` from a raw pointer.
     ///
     /// # Safety
     ///
-    /// The given pointer must have been obtained from [`Unique::as_ptr`], [`Unique::into_raw`],
-    /// or [`Gc::as_ptr`]. There must also exist no other garbage collected pointers
-    /// which point to the same allocation.
+    /// The given pointer must have been obtained from [`Unique::addr`],
+    /// [`Unique::into_raw_parts`], or [`Gc::addr`] within the same mutation session.
+    /// There must also exist no other garbage collected pointers which point to the
+    /// same allocation.
     pub unsafe fn from_raw(raw: NonNull<()>) -> Unique<'gc, T, M> {
         Unique {
             // SAFETY: `raw` is valid and aligned guaranteed by the caller.
@@ -573,7 +575,7 @@ impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: Metadata<'a, T>> Unique<'gc, T, M> {
     /// Converts the `Unique` into a regular [`Gc`].
     pub fn into_gc(self) -> Gc<'gc, T, M> {
         // SAFETY: Trivial.
-        unsafe { Gc::from_raw(M::addr(Unique::into_raw(self))) }
+        unsafe { Gc::from_raw(Unique::into_raw_parts(self).0) }
     }
 }
 
@@ -605,9 +607,9 @@ impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: PtrMetadata<'a, T>> Unique<'gc, T, M> {
     ///
     /// # Safety
     ///
-    /// The given pointer must have been obtained from [`Unique::as_ptr`], [`Unique::into_raw`],
-    /// or [`Gc::as_ptr`]. There must also exist no other garbage collected pointers
-    /// which point to the same allocation.
+    /// The given pointer must have been obtained from [`Unique::as_ptr`], [`Unique::into_ptr`],
+    /// or [`Gc::as_ptr`] within the same mutation session. There must also exist no other
+    /// garbage collected pointers which point to the same allocation.
     pub unsafe fn from_ptr(raw: *mut T) -> Unique<'gc, T, M> {
         Unique {
             // SAFETY: `raw` is valid and aligned guaranteed by the caller.
@@ -626,7 +628,7 @@ impl<'gc, T: 'gc> Unique<'gc, [T]> {
         unsafe { self.ptr.header().reset_vtable::<[MaybeUninit<T>], usize>() };
         self.ptr.header().set_needs_trace(false);
 
-        let (ptr, len) = Self::into_ptr(self).to_raw_parts();
+        let (ptr, len) = Unique::into_ptr(self).to_raw_parts();
         // SAFETY: `ptr` is valid and aligned guaranteed by the caller.
         unsafe { Vec::from_raw_parts(ptr.cast(), len, len) }
     }
