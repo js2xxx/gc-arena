@@ -1,5 +1,6 @@
 #![no_std]
 #![feature(allocator_api)]
+#![feature(associated_type_defaults)]
 #![feature(layout_for_ptr)]
 #![feature(maybe_uninit_write_slice, maybe_uninit_fill, maybe_uninit_slice)]
 #![feature(min_specialization)]
@@ -22,6 +23,7 @@ pub mod gc;
 pub mod lock;
 pub mod metrics;
 mod no_drop;
+pub mod ptr;
 mod types;
 pub mod vec;
 

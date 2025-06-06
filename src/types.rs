@@ -1,104 +1,11 @@
-use core::alloc::{Allocator, Layout, LayoutError};
+use core::alloc::{Allocator, Layout};
 use core::cell::Cell;
-use core::hash::Hash;
 use core::marker::PhantomData;
-use core::ptr::{DynMetadata, NonNull, Pointee};
+use core::ptr::{NonNull, Pointee};
 use core::{fmt, ptr};
 
-use crate::collect::Trace;
-use crate::{collect::Collect, context::Context};
-
-/// # Type parameters
-///
-/// - `'gc`: The lifetime of the garbage collector.
-/// - `T`: The actual residual type.
-///
-/// # Safety
-///
-/// The layout must be valid for the type `T`.
-pub unsafe trait Metadata<'gc, T: ?Sized>:
-    fmt::Debug + Copy + Send + Sync + Ord + Hash + Unpin
-{
-    fn layout(self) -> Result<Layout, LayoutError>;
-
-    unsafe fn drop_in_place(self, ptr: *mut ());
-
-    fn needs_trace(self) -> bool;
-
-    unsafe fn trace<C: Trace<'gc>>(self, ptr: *const (), cc: &mut C);
-}
-
-unsafe impl<'gc, T: Collect<'gc>> Metadata<'gc, T> for () {
-    fn layout(self) -> Result<Layout, LayoutError> {
-        Ok(Layout::new::<T>())
-    }
-
-    unsafe fn drop_in_place(self, ptr: *mut ()) {
-        unsafe { ptr::drop_in_place(ptr.cast::<T>()) };
-    }
-
-    fn needs_trace(self) -> bool {
-        T::NEEDS_TRACE
-    }
-
-    unsafe fn trace<C: Trace<'gc>>(self, ptr: *const (), cc: &mut C) {
-        unsafe { (*ptr.cast::<T>()).trace(cc) };
-    }
-}
-
-unsafe impl<'gc, T: Collect<'gc>> Metadata<'gc, [T]> for usize {
-    fn layout(self) -> Result<Layout, LayoutError> {
-        Layout::array::<T>(self)
-    }
-
-    unsafe fn drop_in_place(self, ptr: *mut ()) {
-        unsafe { ptr::drop_in_place(ptr::from_raw_parts_mut::<[T]>(ptr, self)) };
-    }
-
-    fn needs_trace(self) -> bool {
-        <[T]>::NEEDS_TRACE
-    }
-
-    unsafe fn trace<C: Trace<'gc>>(self, ptr: *const (), cc: &mut C) {
-        unsafe { (*ptr::from_raw_parts::<[T]>(ptr, self)).trace(cc) };
-    }
-}
-
-unsafe impl<'gc, T: Collect<'gc>, const N: usize> Metadata<'gc, [T; N]> for usize {
-    fn layout(self) -> Result<Layout, LayoutError> {
-        <() as Metadata<'gc, [T; N]>>::layout(())
-    }
-
-    unsafe fn drop_in_place(self, ptr: *mut ()) {
-        unsafe { <() as Metadata<'gc, [T; N]>>::drop_in_place((), ptr) };
-    }
-
-    fn needs_trace(self) -> bool {
-        <[T; N]>::NEEDS_TRACE
-    }
-
-    unsafe fn trace<C: Trace<'gc>>(self, ptr: *const (), cc: &mut C) {
-        unsafe { <() as Metadata<'gc, [T; N]>>::trace((), ptr, cc) };
-    }
-}
-
-unsafe impl<'gc, Dyn: ?Sized, T: Collect<'gc>> Metadata<'gc, T> for DynMetadata<Dyn> {
-    fn layout(self) -> Result<Layout, LayoutError> {
-        Ok(Layout::new::<T>())
-    }
-
-    unsafe fn drop_in_place(self, ptr: *mut ()) {
-        unsafe { ptr::drop_in_place(ptr.cast::<T>()) };
-    }
-
-    fn needs_trace(self) -> bool {
-        T::NEEDS_TRACE
-    }
-
-    unsafe fn trace<C: Trace<'gc>>(self, ptr: *const (), cc: &mut C) {
-        unsafe { (*ptr.cast::<T>()).trace(cc) };
-    }
-}
+use crate::context::Context;
+use crate::ptr::MetaCollect;
 
 /// A thin-pointer-sized box containing a type-erased GC object.
 /// Stores the metadata required by the GC algorithm inline.
@@ -123,9 +30,10 @@ impl GcBox {
     ///
     /// This way, we can compute the metadata and header offsets from the untyped value
     /// pointer. Note that the alignment of the former 2 fields should be satisfied.
-    pub(crate) fn box_layout<'gc, T: ?Sized, M>(metadata: M) -> Option<(Layout, usize)>
+    pub(crate) fn box_layout<'a, 'gc, T, M>(metadata: M) -> Option<(Layout, usize)>
     where
-        M: Metadata<'gc, T>,
+        T: ?Sized + 'a,
+        M: MetaCollect<'gc, 'a, T>,
     {
         macro_rules! ctry {
             ($e:expr) => {
@@ -269,23 +177,23 @@ pub(crate) struct GcBoxHeader {
 }
 
 // Helper trait to materialize vtables in static memory.
-trait HasCollectVTable {
+trait HasCollectVTable<'a> {
     const VTABLE: CollectVTable;
 }
 
-impl<'gc, T, M> HasCollectVTable for (PhantomData<T>, M)
+impl<'gc, 'a, T, M> HasCollectVTable<'a> for (PhantomData<T>, M)
 where
-    T: ?Sized,
-    M: Metadata<'gc, T>,
+    T: ?Sized + 'a,
+    M: MetaCollect<'gc, 'a, T>,
 {
     const VTABLE: CollectVTable = CollectVTable::new::<T, M>();
 }
 
 impl GcBoxHeader {
-    pub const fn new<'gc, T, M>() -> Self
+    pub const fn new<'gc, 'a, T, M>() -> Self
     where
-        T: ?Sized,
-        M: Metadata<'gc, T>,
+        T: ?Sized + 'a,
+        M: MetaCollect<'gc, 'a, T>,
     {
         let vtable: &'static _ = &<(PhantomData<T>, M) as HasCollectVTable>::VTABLE;
         Self {
@@ -298,10 +206,10 @@ impl GcBoxHeader {
     /// # Safety
     ///
     /// `T` must conform to the type that was used with `new`.
-    pub unsafe fn reset_vtable<'gc, T, M>(&self)
+    pub unsafe fn reset_vtable<'gc, 'a, T, M>(&self)
     where
-        T: ?Sized,
-        M: Metadata<'gc, T>,
+        T: ?Sized + 'a,
+        M: MetaCollect<'gc, 'a, T>,
     {
         let vtable: &'static _ = &<(PhantomData<T>, M) as HasCollectVTable>::VTABLE;
         let tags = tagged_ptr::get::<0xf, _>(self.tagged_vtable.get());
@@ -427,20 +335,22 @@ impl fmt::Debug for CollectVTable {
 impl CollectVTable {
     /// Makes a vtable for a known type.
     #[inline(always)]
-    const fn new<'gc, T, M>() -> Self
+    const fn new<'gc, 'a, T, M>() -> Self
     where
-        T: ?Sized,
-        M: Metadata<'gc, T>,
+        T: ?Sized + 'a,
+        M: MetaCollect<'gc, 'a, T>,
     {
         Self {
             box_layout: |erased| unsafe {
                 GcBox::box_layout::<T, M>(erased.metadata::<M>()).unwrap_unchecked()
             },
-            drop_value: |erased| unsafe {
-                (erased.metadata::<M>()).drop_in_place(erased.into_raw().as_ptr())
+            drop_value: |erased| {
+                let ptr = unsafe { erased.metadata::<M>() }.with_addr(erased.into_raw());
+                unsafe { M::drop_in_place(ptr) }
             },
-            trace_value: |erased, cc| unsafe {
-                erased.metadata::<M>().trace(erased.into_raw().as_ptr(), cc)
+            trace_value: |erased, cc| {
+                let ptr = unsafe { erased.metadata::<M>() }.with_addr(erased.into_raw());
+                M::trace(unsafe { M::as_ref(ptr) }, cc)
             },
         }
     }

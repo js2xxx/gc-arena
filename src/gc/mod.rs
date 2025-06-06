@@ -16,7 +16,8 @@ use crate::{
     barrier::{Unlock, Write},
     collect::{Collect, Static, Trace},
     context::Mutation,
-    types::{GcBox, GcColor, Invariant, Metadata},
+    ptr::MetaCollect,
+    types::{GcBox, GcColor, Invariant},
     vec::Vec,
 };
 
@@ -106,10 +107,12 @@ impl<'gc, T: Collect<'gc> + 'gc> Gc<'gc, T> {
         Unique::new(mc, t)
     }
 
-    pub fn new_unsize<Dyn>(mc: &Mutation<'gc>, t: T) -> Gc<'gc, Dyn>
+    /// Creates a new `Gc` pointer containing the given value, unsizing
+    /// to a dynamically sized type.
+    pub fn new_unsize<'a, Dyn>(mc: &Mutation<'gc>, t: T) -> Gc<'gc, Dyn>
     where
-        T: Unsize<Dyn>,
-        Dyn: 'gc + ?Sized + Pointee<Metadata: Metadata<'gc, T>>,
+        T: Unsize<Dyn> + 'a,
+        Dyn: 'gc + ?Sized + Pointee<Metadata: MetaCollect<'gc, 'a, T>>,
     {
         Unique::new_unsize::<Dyn>(mc, t).into_gc()
     }
@@ -176,6 +179,7 @@ impl<'gc, T: 'static> Gc<'gc, T> {
 }
 
 impl<'gc> Gc<'gc, dyn Any> {
+    /// Cast a `Gc` pointer to a concrete type.
     pub fn downcast<T: Any>(self) -> Option<Gc<'gc, T>> {
         if self.is::<T>() {
             // SAFETY: `self` is a `Gc<dyn Any>`, so it is valid to cast to `T`.
@@ -185,11 +189,11 @@ impl<'gc> Gc<'gc, dyn Any> {
         }
     }
 
-    /// Cast a `Gc` pointer to a concrete type.
+    /// Cast a `Gc` pointer to a concrete type without checks.
     ///
     /// # Safety
     ///
-    /// `self` must contains a `Unique<T>`.
+    /// `self` must be a `Gc<T>`.
     pub unsafe fn downcast_unchecked<T: Any>(self) -> Gc<'gc, T> {
         // SAFETY: `self` is a `Gc<dyn Any>`, so it is valid to cast to `T`.
         unsafe { Gc::cast::<T>(self) }
@@ -197,6 +201,7 @@ impl<'gc> Gc<'gc, dyn Any> {
 }
 
 impl<'gc> Gc<'gc, dyn Error + 'static> {
+    /// Cast a `Gc` pointer to a concrete type.
     pub fn downcast<T: Error + 'static>(self) -> Option<Gc<'gc, T>> {
         if self.is::<T>() {
             // SAFETY: `self` is a `Gc<dyn Error>`, so it is valid to cast to `T`.
@@ -269,6 +274,10 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
         unsafe { &*self.ptr.unerased_value::<T>() }
     }
 
+    /// Obtains a [weaked] version of the `Gc` pointer. Useful for breaking reference cycles
+    /// and clarify ownership relations.
+    ///
+    /// [weaked]: Weak
     #[inline]
     pub fn downgrade(this: Gc<'gc, T>) -> Weak<'gc, T> {
         Weak { inner: this }
@@ -302,6 +311,7 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
         Gc::as_ptr(this) as *const () == Gc::as_ptr(other) as *const ()
     }
 
+    /// Returns a raw pointer to the contents of this `Gc`.
     #[inline]
     pub fn as_ptr(gc: Gc<'gc, T>) -> *const T {
         unsafe { gc.ptr.unerased_value::<T>() }

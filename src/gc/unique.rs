@@ -14,7 +14,8 @@ use crate::{
     Gc,
     collect::{Collect, Trace},
     context::Mutation,
-    types::{GcBox, Invariant, Metadata},
+    ptr::MetaCollect,
+    types::{GcBox, Invariant},
     vec::Vec,
 };
 
@@ -131,10 +132,10 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, T> {
 
     /// Creates a new `Unique` containing the given value, unsizing to a dynamically sized type.
     #[inline]
-    pub fn new_unsize<Dyn>(mc: &Mutation<'gc>, t: T) -> Unique<'gc, Dyn>
+    pub fn new_unsize<'a, Dyn>(mc: &Mutation<'gc>, t: T) -> Unique<'gc, Dyn>
     where
-        T: Unsize<Dyn>,
-        Dyn: 'gc + ?Sized + Pointee<Metadata: Metadata<'gc, T>>,
+        T: Unsize<Dyn> + 'a,
+        Dyn: 'gc + ?Sized + Pointee<Metadata: MetaCollect<'gc, 'a, T>>,
     {
         let metadata = core::ptr::metadata(&t as &Dyn);
         let gc_box = mc.allocate::<T, _, false>(metadata);
@@ -455,6 +456,7 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, [MaybeUninit<T>]> {
 }
 
 impl<'gc> Unique<'gc, dyn Any> {
+    /// Cast a `Unique` GC pointer to a concrete type.
     pub fn downcast<T: Any>(self) -> Result<Unique<'gc, T>, Self> {
         if self.is::<T>() {
             // SAFETY: `self` is a `Unique<dyn Any>`, so it is valid to cast to `T`.
@@ -464,11 +466,11 @@ impl<'gc> Unique<'gc, dyn Any> {
         }
     }
 
-    /// Cast a `Unique` GC pointer to a concrete type.
+    /// Cast a `Unique` GC pointer to a concrete type without checks.
     ///
     /// # Safety
     ///
-    /// `self` must contains a `Unique<T>`.
+    /// `self` must be a `Unique<T>`.
     pub unsafe fn downcast_unchecked<T: Any>(self) -> Unique<'gc, T> {
         // SAFETY: `self` is a `Unique<dyn Any>`, so it is valid to cast to `T`.
         unsafe { Unique::cast(self) }
@@ -476,6 +478,7 @@ impl<'gc> Unique<'gc, dyn Any> {
 }
 
 impl<'gc> Unique<'gc, dyn Error + 'static> {
+    /// Cast a `Unique` GC pointer to a concrete type.
     pub fn downcast<T: Error + 'static>(self) -> Result<Unique<'gc, T>, Self> {
         if self.is::<T>() {
             // SAFETY: `self` is a `Unique<dyn Error>`, so it is valid to cast to `T`.
@@ -485,11 +488,11 @@ impl<'gc> Unique<'gc, dyn Error + 'static> {
         }
     }
 
-    /// Cast a `Unique` GC pointer to a concrete type.
+    /// Cast a `Unique` GC pointer to a concrete type without checks.
     ///
     /// # Safety
     ///
-    /// `self` must contains a `Unique<T>`.
+    /// `self` must be a `Unique<T>`.
     pub unsafe fn downcast_unchecked<T: Error + 'static>(self) -> Unique<'gc, T> {
         // SAFETY: `self` is a `Unique<dyn Error>`, so it is valid to cast to `T`.
         unsafe { Unique::cast(self) }
@@ -559,6 +562,7 @@ impl<'gc, T: ?Sized + 'gc> Unique<'gc, T> {
 }
 
 impl<'gc, T: 'gc> Unique<'gc, [T]> {
+    /// Converts the `Unique` into a GC'd [`Vec`].
     pub fn into_vec(self) -> Vec<'gc, T> {
         let () = Vec::<'gc, T>::ASSERT_NO_DROP;
         // SAFETY: the elements is handled separately in `Vec`s, so

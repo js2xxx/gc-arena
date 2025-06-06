@@ -17,6 +17,7 @@ use crate::{
 /// `Rootable<'a>` for *any* possible `'a`. This is necessary so that the `Root` types can be
 /// branded by the unique, invariant lifetimes that makes an `Arena` sound.
 pub trait Rootable<'a> {
+    /// The rooted GC-managed type.
     type Root: ?Sized + 'a;
 }
 
@@ -82,6 +83,7 @@ macro_rules! Rootable {
 /// A helper type alias for a `Rootable::Root` for a specific lifetime.
 pub type Root<'a, R> = <R as Rootable<'a>>::Root;
 
+#[expect(missing_docs, reason = "self-describing type")]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum CollectionPhase {
     /// The arena is done with a collection cycle and is waiting to be restarted.

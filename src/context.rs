@@ -11,7 +11,8 @@ use crate::{
     collect::{Collect, Trace},
     gc::{Gc, Weak},
     metrics::Metrics,
-    types::{GcBox, GcBoxHeader, GcColor, Invariant, Metadata},
+    ptr::MetaCollect,
+    types::{GcBox, GcBoxHeader, GcColor, Invariant},
 };
 
 /// Handle value given by arena callbacks during construction and mutation. Allows allocating new
@@ -94,10 +95,10 @@ impl<'gc> Mutation<'gc> {
     }
 
     #[inline]
-    pub(crate) fn allocate<T, M, const ZEROED: bool>(&self, metadata: M) -> GcBox
+    pub(crate) fn allocate<'a, T, M, const ZEROED: bool>(&self, metadata: M) -> GcBox
     where
-        T: 'gc + ?Sized,
-        M: Metadata<'gc, T>,
+        T: 'a + ?Sized,
+        M: MetaCollect<'gc, 'a, T>,
     {
         self.context.allocate::<T, M, false>(metadata, self.alloc)
     }
@@ -380,10 +381,10 @@ impl Context {
         cx.log_progress("GC: yielding...");
     }
 
-    fn allocate<'gc, T, M, const ZEROED: bool>(&self, metadata: M, a: &dyn Allocator) -> GcBox
+    fn allocate<'gc, 'a, T, M, const ZEROED: bool>(&self, metadata: M, a: &dyn Allocator) -> GcBox
     where
-        T: ?Sized,
-        M: Metadata<'gc, T>,
+        T: 'a + ?Sized,
+        M: MetaCollect<'gc, 'a, T>,
     {
         let header = GcBoxHeader::new::<T, M>();
         header.set_next(self.all.get());
