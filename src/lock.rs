@@ -10,6 +10,7 @@ use crate::{
     Gc, Mutation,
     barrier::Unlock,
     collect::{Collect, Trace},
+    ptr::PtrMetadata,
 };
 
 // Helper macro to factor out the common parts of locks types.
@@ -263,16 +264,16 @@ impl<T: fmt::Debug + ?Sized> fmt::Debug for RefLock<T> {
     }
 }
 
-impl<'gc, T: ?Sized + 'gc> Gc<'gc, RefLock<T>> {
+impl<'gc, T: ?Sized + 'gc, M: PtrMetadata<'gc, RefLock<T>>> Gc<'gc, RefLock<T>, M> {
     #[track_caller]
     #[inline]
     pub fn borrow(self) -> Ref<'gc, T> {
-        RefLock::borrow(self.get_ref())
+        RefLock::borrow(Gc::get_ref(self))
     }
 
     #[inline]
     pub fn try_borrow(self) -> Result<Ref<'gc, T>, BorrowError> {
-        RefLock::try_borrow(self.get_ref())
+        RefLock::try_borrow(Gc::get_ref(self))
     }
 
     #[track_caller]

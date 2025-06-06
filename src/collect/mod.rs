@@ -1,4 +1,4 @@
-use crate::gc::{Gc, Weak};
+use crate::gc::{Gc, Unique, Weak};
 
 mod imp;
 mod static_;
@@ -63,10 +63,13 @@ pub unsafe trait Collect<'gc> {
 /// guarantees of [`Collect`] when using this trait.
 pub trait Trace<'gc> {
     /// Trace a [`Gc`] pointer (of any real type).
-    fn trace_gc<T: ?Sized + 'gc>(&mut self, gc: Gc<'gc, T>);
+    fn trace_gc<T: ?Sized + 'gc, M: 'gc>(&mut self, gc: Gc<'gc, T, M>);
 
     /// Trace a [`Weak`] pointer (of any real type).
-    fn trace_weak<T: ?Sized + 'gc>(&mut self, gc: Weak<'gc, T>);
+    fn trace_weak<T: ?Sized + 'gc, M: 'gc>(&mut self, gc: Weak<'gc, T, M>);
+
+    /// Trace a [`Unique`] pointer (of any real type).
+    fn trace_unique<T: ?Sized + 'gc, M: 'gc>(&mut self, gc: &Unique<'gc, T, M>);
 
     /// This is a convenience method that calls [`Collect::trace`] but automatically adds a
     /// [`Collect::NEEDS_TRACE`] check around it.

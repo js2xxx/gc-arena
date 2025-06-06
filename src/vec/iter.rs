@@ -60,7 +60,7 @@ impl<'gc, T: 'gc + Collect<'gc>> IntoIter<'gc, T> {
             // SAFETY: `self.start` and `self.end` are valid
             // pointers to the same allocation as `self.buf`.
             return unsafe {
-                let (ptr, cap) = Unique::into_raw(ptr::read(&this.buf)).to_raw_parts();
+                let (ptr, cap) = Unique::into_ptr(ptr::read(&this.buf)).to_raw_parts();
                 let dst = ptr.cast::<T>();
                 let src = this.start.as_ptr();
 

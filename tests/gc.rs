@@ -567,7 +567,7 @@ fn cast() {
         );
 
         unsafe {
-            let b = Gc::cast::<B>(a);
+            let b = Gc::cast::<B, ()>(a);
             assert_eq!(b.header.get(), 0b01010101);
             b.header.set(0b11111111);
         }
@@ -591,7 +591,7 @@ fn ptr_magic() {
         unsafe {
             assert_eq!(*aptr, S(3, 4, 5));
 
-            let b = Gc::from_ptr(aptr);
+            let b = Gc::<S, ()>::from_ptr(aptr);
             assert_eq!(*b, S(3, 4, 5));
         }
     });

@@ -9,7 +9,7 @@ use core::{
 
 use crate::{
     collect::{Collect, Trace},
-    gc::{Gc, Weak},
+    gc::{Gc, Unique, Weak},
     metrics::Metrics,
     ptr::MetaCollect,
     types::{GcBox, GcBoxHeader, GcColor, Invariant},
@@ -41,10 +41,12 @@ impl<'gc> Mutation<'gc> {
     /// method is more general, and it ensures that the `parent` pointer may adopt *any* child
     /// pointer(s) before collection is next triggered.
     #[inline]
-    pub fn backward_barrier<T, U>(&self, parent: Gc<'gc, T>, child: Option<Gc<'gc, U>>)
+    pub fn backward_barrier<T, U, M, N>(&self, parent: Gc<'gc, T, M>, child: Option<Gc<'gc, U, N>>)
     where
         T: ?Sized + 'gc,
         U: ?Sized + 'gc,
+        M: 'gc,
+        N: 'gc,
     {
         self.context
             .backward_barrier(parent.ptr, child.map(|p| p.ptr))
@@ -52,10 +54,12 @@ impl<'gc> Mutation<'gc> {
 
     /// A version of [`Mutation::backward_barrier`] that allows adopting a [`Weak`] child.
     #[inline]
-    pub fn backward_barrier_weak<T, U>(&self, parent: Gc<'gc, T>, child: Weak<'gc, U>)
+    pub fn backward_barrier_weak<T, U, M, N>(&self, parent: Gc<'gc, T, M>, child: Weak<'gc, U, N>)
     where
         T: ?Sized + 'gc,
         U: ?Sized + 'gc,
+        M: 'gc,
+        N: 'gc,
     {
         self.context
             .backward_barrier_weak(parent.ptr, child.inner.ptr)
@@ -74,10 +78,12 @@ impl<'gc> Mutation<'gc> {
     /// method is more general, and it ensures that the `child` pointer may be adopted by *any*
     /// parent pointer(s) before collection is next triggered.
     #[inline]
-    pub fn forward_barrier<T, U>(&self, parent: Option<Gc<'gc, T>>, child: Gc<'gc, U>)
+    pub fn forward_barrier<T, U, M, N>(&self, parent: Option<Gc<'gc, T, M>>, child: Gc<'gc, U, N>)
     where
         T: ?Sized + 'gc,
         U: ?Sized + 'gc,
+        M: 'gc,
+        N: 'gc,
     {
         self.context
             .forward_barrier(parent.map(|p| p.ptr), child.ptr)
@@ -85,10 +91,15 @@ impl<'gc> Mutation<'gc> {
 
     /// A version of [`Mutation::forward_barrier`] that allows adopting a [`Weak`] child.
     #[inline]
-    pub fn forward_barrier_weak<T, U>(&self, parent: Option<Gc<'gc, T>>, child: Weak<'gc, U>)
-    where
+    pub fn forward_barrier_weak<T, U, M, N>(
+        &self,
+        parent: Option<Gc<'gc, T, M>>,
+        child: Weak<'gc, U, N>,
+    ) where
         T: ?Sized + 'gc,
         U: ?Sized + 'gc,
+        M: 'gc,
+        N: 'gc,
     {
         self.context
             .forward_barrier_weak(parent.map(|p| p.ptr), child.inner.ptr)
@@ -131,12 +142,16 @@ impl<'gc> Finalization<'gc> {
 }
 
 impl<'gc> Trace<'gc> for Context {
-    fn trace_gc<T: ?Sized + 'gc>(&mut self, gc: Gc<'gc, T>) {
+    fn trace_gc<T: ?Sized + 'gc, M: 'gc>(&mut self, gc: Gc<'gc, T, M>) {
         Context::trace(self, gc.ptr)
     }
 
-    fn trace_weak<T: ?Sized + 'gc>(&mut self, gc: Weak<'gc, T>) {
+    fn trace_weak<T: ?Sized + 'gc, M: 'gc>(&mut self, gc: Weak<'gc, T, M>) {
         Context::trace_weak(self, gc.inner.ptr)
+    }
+
+    fn trace_unique<T: ?Sized + 'gc, M: 'gc>(&mut self, gc: &Unique<'gc, T, M>) {
+        Context::trace(self, gc.ptr);
     }
 }
 

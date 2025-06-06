@@ -16,7 +16,7 @@ use crate::{
     barrier::{Unlock, Write},
     collect::{Collect, Static, Trace},
     context::Mutation,
-    ptr::MetaCollect,
+    ptr::{MetaCollect, Metadata, PtrMeta, PtrMetadata},
     types::{GcBox, GcColor, Invariant},
     vec::Vec,
 };
@@ -32,62 +32,82 @@ pub use self::{unique::Unique, weak::Weak};
 /// be stored inside TLS. This, combined with correct `Collect` implementations, means that `Gc`
 /// pointers will never be dangling and are always safe to access.
 #[repr(transparent)]
-pub struct Gc<'gc, T: ?Sized + 'gc> {
+pub struct Gc<'gc, T: ?Sized + 'gc, M: 'gc = PtrMeta<T>> {
     pub(crate) ptr: GcBox,
-    pub(crate) _invariant: Invariant<'gc, T>,
+    pub(crate) _invariant: Invariant<'gc, T, M>,
 }
 
-impl<'gc, T: Debug + ?Sized + 'gc> Debug for Gc<'gc, T> {
+impl<'gc, 'a, T: Debug, M> Debug for Gc<'gc, T, M>
+where
+    T: ?Sized + 'gc + 'a,
+    M: PtrMetadata<'a, T>,
+{
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt::Debug::fmt(&**self, fmt)
     }
 }
 
-impl<'gc, T: ?Sized + 'gc> Pointer for Gc<'gc, T> {
+impl<'gc, 'a, T: ?Sized + 'gc + 'a, M: Metadata<'a, T>> Pointer for Gc<'gc, T, M> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Pointer::fmt(&Gc::as_ptr(*self), fmt)
+        fmt::Pointer::fmt(&M::addr(Gc::into_raw(*self)), fmt)
     }
 }
 
-impl<'gc, T: Display + ?Sized + 'gc> Display for Gc<'gc, T> {
+impl<'gc, 'a, T: Display, M> Display for Gc<'gc, T, M>
+where
+    T: ?Sized + 'gc + 'a,
+    M: PtrMetadata<'a, T>,
+{
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt::Display::fmt(&**self, fmt)
     }
 }
 
-impl<'gc, T: ?Sized + 'gc> Copy for Gc<'gc, T> {}
+impl<'gc, T: ?Sized + 'gc, M: 'gc> Copy for Gc<'gc, T, M> {}
 
-impl<'gc, T: ?Sized + 'gc> Clone for Gc<'gc, T> {
+impl<'gc, T: ?Sized + 'gc, M: 'gc> Clone for Gc<'gc, T, M> {
     #[inline]
-    fn clone(&self) -> Gc<'gc, T> {
+    fn clone(&self) -> Gc<'gc, T, M> {
         *self
     }
 }
 
-unsafe impl<'gc, T: ?Sized + 'gc> Collect<'gc> for Gc<'gc, T> {
+unsafe impl<'gc, T: ?Sized + 'gc, M: 'gc> Collect<'gc> for Gc<'gc, T, M> {
     #[inline]
     fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
         cc.trace_gc(*self)
     }
 }
 
-impl<'gc, T: ?Sized + 'gc> Deref for Gc<'gc, T> {
+impl<'gc, 'a, T, M> Deref for Gc<'gc, T, M>
+where
+    T: ?Sized + 'gc + 'a,
+    M: PtrMetadata<'a, T>,
+{
     type Target = T;
 
     #[inline]
     fn deref(&self) -> &T {
-        unsafe { &*self.ptr.unerased_value::<T>() }
+        unsafe { self.ptr.unerase::<T, M>().as_ref() }
     }
 }
 
-impl<'gc, T: ?Sized + 'gc> AsRef<T> for Gc<'gc, T> {
+impl<'gc, 'a, T, M> AsRef<T> for Gc<'gc, T, M>
+where
+    T: ?Sized + 'gc + 'a,
+    M: PtrMetadata<'a, T>,
+{
     #[inline]
     fn as_ref(&self) -> &T {
         self
     }
 }
 
-impl<'gc, T: ?Sized + 'gc> Borrow<T> for Gc<'gc, T> {
+impl<'gc, 'a, T, M> Borrow<T> for Gc<'gc, T, M>
+where
+    T: ?Sized + 'gc + 'a,
+    M: PtrMetadata<'a, T>,
+{
     #[inline]
     fn borrow(&self) -> &T {
         self
@@ -112,7 +132,8 @@ impl<'gc, T: Collect<'gc> + 'gc> Gc<'gc, T> {
     pub fn new_unsize<'a, Dyn>(mc: &Mutation<'gc>, t: T) -> Gc<'gc, Dyn>
     where
         T: Unsize<Dyn> + 'a,
-        Dyn: 'gc + ?Sized + Pointee<Metadata: MetaCollect<'gc, 'a, T>>,
+        Dyn: 'gc + 'a + ?Sized,
+        <Dyn as Pointee>::Metadata: MetaCollect<'gc, 'a, T, Ptr = NonNull<T>> + Metadata<'a, Dyn>,
     {
         Unique::new_unsize::<Dyn>(mc, t).into_gc()
     }
@@ -174,7 +195,7 @@ impl<'gc, T: 'static> Gc<'gc, T> {
     pub fn new_static(mc: &Mutation<'gc>, t: T) -> Gc<'gc, T> {
         let p = Gc::new(mc, Static(t));
         // SAFETY: `Static` is `#[repr(transparent)]`.
-        unsafe { Gc::cast::<T>(p) }
+        unsafe { Gc::cast::<T, _>(p) }
     }
 }
 
@@ -183,7 +204,7 @@ impl<'gc> Gc<'gc, dyn Any> {
     pub fn downcast<T: Any>(self) -> Option<Gc<'gc, T>> {
         if self.is::<T>() {
             // SAFETY: `self` is a `Gc<dyn Any>`, so it is valid to cast to `T`.
-            Some(unsafe { Gc::cast(self) })
+            Some(unsafe { Gc::cast::<T, _>(self) })
         } else {
             None
         }
@@ -196,7 +217,7 @@ impl<'gc> Gc<'gc, dyn Any> {
     /// `self` must be a `Gc<T>`.
     pub unsafe fn downcast_unchecked<T: Any>(self) -> Gc<'gc, T> {
         // SAFETY: `self` is a `Gc<dyn Any>`, so it is valid to cast to `T`.
-        unsafe { Gc::cast::<T>(self) }
+        unsafe { Gc::cast::<T, _>(self) }
     }
 }
 
@@ -205,7 +226,7 @@ impl<'gc> Gc<'gc, dyn Error + 'static> {
     pub fn downcast<T: Error + 'static>(self) -> Option<Gc<'gc, T>> {
         if self.is::<T>() {
             // SAFETY: `self` is a `Gc<dyn Error>`, so it is valid to cast to `T`.
-            Some(unsafe { Gc::cast(self) })
+            Some(unsafe { Gc::cast::<T, _>(self) })
         } else {
             None
         }
@@ -218,71 +239,40 @@ impl<'gc> Gc<'gc, dyn Error + 'static> {
     /// `self` must contains a `Unique<T>`.
     pub unsafe fn downcast_unchecked<T: Error + 'static>(self) -> Gc<'gc, T> {
         // SAFETY: `self` is a `Gc<dyn Any>`, so it is valid to cast to `T`.
-        unsafe { Gc::cast::<T>(self) }
+        unsafe { Gc::cast::<T, _>(self) }
     }
 }
 
-impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
+impl<'gc, T: ?Sized + 'gc, M: 'gc> Gc<'gc, T, M> {
     /// Cast a `Gc` pointer to a different type.
     ///
     /// # Safety
     ///
-    /// It must be valid to dereference a `*mut U` that has come from casting a `*mut T`.
+    /// It must be valid to dereference a `N<U>::Ptr` that has come from casting a `M<T>::Ptr`.
     #[inline]
-    pub unsafe fn cast<U: 'gc>(this: Gc<'gc, T>) -> Gc<'gc, U> {
+    pub unsafe fn cast<U: 'gc, N: 'gc>(this: Gc<'gc, T, M>) -> Gc<'gc, U, N> {
         Gc {
             ptr: this.ptr,
             _invariant: PhantomData,
         }
     }
-
-    /// Retrieve a `Gc` from a raw pointer obtained from `Gc::as_ptr`
-    ///
-    /// # Safety
-    /// The provided pointer must have been obtained from `Gc::as_ptr`, and the pointer must not
-    /// have been collected yet.
-    #[inline]
-    pub unsafe fn from_ptr(ptr: *const T) -> Gc<'gc, T> {
-        Gc {
-            // SAFETY: `ptr` is valid and aligned guaranteed by the caller.
-            ptr: unsafe { GcBox::erase(NonNull::new_unchecked(ptr.cast_mut())) },
-            _invariant: PhantomData,
-        }
-    }
 }
 
-impl<'gc, T: Unlock + ?Sized + 'gc> Gc<'gc, T> {
-    /// Shorthand for [`Gc::write`]`(mc, self).`[`unlock()`](Write::unlock).
-    #[inline]
-    pub fn unlock(self, mc: &Mutation<'gc>) -> &'gc T::Unlocked {
-        Gc::write(mc, self);
-        // SAFETY: see doc-comment.
-        unsafe { self.get_ref().unlock_unchecked() }
-    }
-}
-
-impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
+impl<'gc, T: 'gc + ?Sized, M: Metadata<'gc, T>> Gc<'gc, T, M> {
     /// Obtains a long-lived reference to the contents of this `Gc`.
     ///
     /// Unlike `AsRef` or `Deref`, the returned reference isn't bound to the `Gc` itself, and
     /// will stay valid for the entirety of the current arena callback.
     #[inline]
-    pub fn get_ref(self) -> &'gc T {
+    pub fn get_ref(this: Self) -> M::Ref {
         // SAFETY: The returned reference cannot escape the current arena callback, as `&'gc T`
         // never implements `Collect` (unless `'gc` is `'static`, which is impossible here), and
         // so cannot be stored inside the GC root.
-        unsafe { &*self.ptr.unerased_value::<T>() }
+        unsafe { M::as_ref(this.ptr.unerase::<T, M>()) }
     }
+}
 
-    /// Obtains a [weaked] version of the `Gc` pointer. Useful for breaking reference cycles
-    /// and clarify ownership relations.
-    ///
-    /// [weaked]: Weak
-    #[inline]
-    pub fn downgrade(this: Gc<'gc, T>) -> Weak<'gc, T> {
-        Weak { inner: this }
-    }
-
+impl<'gc, T: 'gc + ?Sized, M: PtrMetadata<'gc, T>> Gc<'gc, T, M> {
     /// Triggers a write barrier on this `Gc`, allowing for safe mutation.
     ///
     /// This triggers an unrestricted *backwards* write barrier on this pointer, meaning that it is
@@ -294,9 +284,77 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
     #[inline]
     pub fn write(mc: &Mutation<'gc>, gc: Self) -> &'gc Write<T> {
         unsafe {
-            mc.backward_barrier::<_, Infallible>(gc, None);
+            mc.backward_barrier::<_, Infallible, _, Infallible>(gc, None);
             // SAFETY: the write barrier stays valid until the end of the current callback.
-            Write::assume(gc.get_ref())
+            Write::assume(Self::get_ref(gc))
+        }
+    }
+
+    /// Shorthand for [`Gc::write`]`(mc, self).`[`unlock()`](Write::unlock).
+    #[inline]
+    pub fn unlock(self, mc: &Mutation<'gc>) -> &'gc T::Unlocked
+    where
+        T: Unlock,
+    {
+        Gc::write(mc, self);
+        // SAFETY: see doc-comment.
+        unsafe { Gc::get_ref(self).unlock_unchecked() }
+    }
+}
+
+impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: PtrMetadata<'a, T>> Gc<'gc, T, M> {
+    /// Returns a raw pointer to the `Gc`'s contents.
+    ///
+    /// Very few guarantees are given about this pointer, except that it is properly
+    /// aligned, and points to a valid instance of `T`
+    pub fn as_ptr(this: Self) -> *const T {
+        unsafe { this.ptr.unerase::<T, M>().as_ptr() }
+    }
+
+    /// Constructs a `Gc` from a raw pointer.
+    ///
+    /// # Safety
+    ///
+    /// The given pointer must have been obtained from [`Gc::as_ptr`]. There must
+    /// also exist no other garbage collected pointers which point to the same allocation.
+    pub unsafe fn from_ptr(raw: *const T) -> Self {
+        Gc {
+            // SAFETY: `raw` is valid and aligned guaranteed by the caller.
+            ptr: unsafe { GcBox::erase::<T, M>(NonNull::new_unchecked(raw.cast_mut())) },
+            _invariant: PhantomData,
+        }
+    }
+}
+
+impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: Metadata<'a, T>> Gc<'gc, T, M> {
+    /// Obtains a [weaked] version of the `Gc` pointer. Useful for breaking reference cycles
+    /// and clarify ownership relations.
+    ///
+    /// [weaked]: Weak
+    #[inline]
+    pub fn downgrade(this: Gc<'gc, T, M>) -> Weak<'gc, T, M> {
+        Weak { inner: this }
+    }
+
+    /// Returns the raw pointer parts to the `Gc`'s contents.
+    ///
+    /// Very few guarantees are given about this pointer, except that it is properly
+    /// aligned, and points to a valid instance of `T`
+    pub fn into_raw(this: Self) -> M::Ptr {
+        unsafe { this.ptr.unerase::<T, M>() }
+    }
+
+    /// Constructs a `Gc` from a raw address.
+    ///
+    /// # Safety
+    ///
+    /// The given pointer must have been obtained from [`Gc::into_raw`]. There must
+    /// also exist no other garbage collected pointers which point to the same allocation.
+    pub unsafe fn from_raw(raw: NonNull<()>) -> Self {
+        Gc {
+            // SAFETY: `raw` is valid and aligned guaranteed by the caller.
+            ptr: unsafe { GcBox::from_raw(raw) },
+            _invariant: PhantomData,
         }
     }
 
@@ -305,16 +363,8 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
     /// Similarly to `Rc::ptr_eq` and `Arc::ptr_eq`, this function ignores the metadata of `dyn`
     /// pointers.
     #[inline]
-    pub fn ptr_eq(this: Gc<'gc, T>, other: Gc<'gc, T>) -> bool {
-        // TODO: Equivalent to `core::ptr::addr_eq`:
-        // https://github.com/rust-lang/rust/issues/116324
-        Gc::as_ptr(this) as *const () == Gc::as_ptr(other) as *const ()
-    }
-
-    /// Returns a raw pointer to the contents of this `Gc`.
-    #[inline]
-    pub fn as_ptr(gc: Gc<'gc, T>) -> *const T {
-        unsafe { gc.ptr.unerased_value::<T>() }
+    pub fn ptr_eq(this: Self, other: Self) -> bool {
+        M::addr(Gc::into_raw(this)) == M::addr(Gc::into_raw(other))
     }
 
     /// Returns true when a pointer is *dead* during finalization. This is equivalent to
@@ -323,7 +373,7 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
     /// Any strong pointer reachable from the root will never be dead, BUT there can be strong
     /// pointers reachable only through other weak pointers that can be dead.
     #[inline]
-    pub fn is_dead(_: &Finalization<'gc>, gc: Gc<'gc, T>) -> bool {
+    pub fn is_dead(_: &Finalization<'gc>, gc: Self) -> bool {
         matches!(gc.ptr.header().color(), GcColor::White | GcColor::WhiteWeak)
     }
 
@@ -333,62 +383,85 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
     /// all transitively held pointers as reachable, thus keeping them from being dropped this
     /// collection cycle.
     #[inline]
-    pub fn resurrect(fc: &Finalization<'gc>, gc: Gc<'gc, T>) {
+    pub fn resurrect(fc: &Finalization<'gc>, gc: Self) {
         fc.resurrect(gc.ptr);
     }
 }
 
-impl<'gc, T: PartialEq<U> + ?Sized + 'gc, U: ?Sized + 'gc> PartialEq<Gc<'gc, U>> for Gc<'gc, T> {
-    fn eq(&self, other: &Gc<'gc, U>) -> bool {
+impl<'gc, 'a, 'b, T, U, M, N> PartialEq<Gc<'gc, U, N>> for Gc<'gc, T, M>
+where
+    T: PartialEq<U> + ?Sized + 'gc + 'a,
+    U: ?Sized + 'gc + 'b,
+    M: PtrMetadata<'a, T> + 'gc,
+    N: PtrMetadata<'b, U> + 'gc,
+{
+    fn eq(&self, other: &Gc<'gc, U, N>) -> bool {
         (**self).eq(other)
     }
 }
 
-impl<'gc, T: Eq + ?Sized + 'gc> Eq for Gc<'gc, T> {}
+impl<'gc, 'a, T, M> Eq for Gc<'gc, T, M>
+where
+    T: Eq + ?Sized + 'gc + 'a,
+    M: PtrMetadata<'a, T> + 'gc,
+{
+}
 
-impl<'gc, T: PartialOrd<U> + ?Sized + 'gc, U: ?Sized + 'gc> PartialOrd<Gc<'gc, U>> for Gc<'gc, T> {
-    fn partial_cmp(&self, other: &Gc<'gc, U>) -> Option<core::cmp::Ordering> {
+impl<'gc, 'a, 'b, T, U, M, N> PartialOrd<Gc<'gc, U, N>> for Gc<'gc, T, M>
+where
+    T: PartialOrd<U> + ?Sized + 'gc + 'a,
+    U: ?Sized + 'gc + 'b,
+    M: PtrMetadata<'a, T> + 'gc,
+    N: PtrMetadata<'b, U> + 'gc,
+{
+    fn partial_cmp(&self, other: &Gc<'gc, U, N>) -> Option<core::cmp::Ordering> {
         (**self).partial_cmp(other)
     }
 
-    fn le(&self, other: &Gc<'gc, U>) -> bool {
+    fn le(&self, other: &Gc<'gc, U, N>) -> bool {
         (**self).le(other)
     }
 
-    fn lt(&self, other: &Gc<'gc, U>) -> bool {
+    fn lt(&self, other: &Gc<'gc, U, N>) -> bool {
         (**self).lt(other)
     }
 
-    fn ge(&self, other: &Gc<'gc, U>) -> bool {
+    fn ge(&self, other: &Gc<'gc, U, N>) -> bool {
         (**self).ge(other)
     }
 
-    fn gt(&self, other: &Gc<'gc, U>) -> bool {
+    fn gt(&self, other: &Gc<'gc, U, N>) -> bool {
         (**self).gt(other)
     }
 }
 
-impl<'gc, T: Ord + ?Sized + 'gc> Ord for Gc<'gc, T> {
+impl<'gc, 'a, T, M> Ord for Gc<'gc, T, M>
+where
+    T: Ord + ?Sized + 'gc + 'a,
+    M: PtrMetadata<'a, T> + 'gc,
+{
     fn cmp(&self, other: &Self) -> core::cmp::Ordering {
         (**self).cmp(other)
     }
 }
 
-impl<'gc, T: Hash + ?Sized + 'gc> Hash for Gc<'gc, T> {
+impl<'gc, 'a, T, M> Hash for Gc<'gc, T, M>
+where
+    T: Hash + ?Sized + 'gc + 'a,
+    M: PtrMetadata<'a, T> + 'gc,
+{
     fn hash<H: Hasher>(&self, state: &mut H) {
         (**self).hash(state)
     }
 }
 
 impl<'gc, T: 'gc + Collect<'gc>> From<(&Mutation<'gc>, Vec<'gc, T>)> for Gc<'gc, [T]> {
-    #[inline]
     fn from((mc, vec): (&Mutation<'gc>, Vec<'gc, T>)) -> Self {
         vec.into_gc_slice(mc)
     }
 }
 
 impl<'gc, T: 'gc + Collect<'gc>> From<(Vec<'gc, T>, &Mutation<'gc>)> for Gc<'gc, [T]> {
-    #[inline]
     fn from((vec, mc): (Vec<'gc, T>, &Mutation<'gc>)) -> Self {
         vec.into_gc_slice(mc)
     }

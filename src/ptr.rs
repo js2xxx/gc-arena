@@ -1,9 +1,11 @@
 use core::{
     alloc::{Layout, LayoutError},
-    ptr::{DynMetadata, NonNull},
+    ptr::{DynMetadata, NonNull, Pointee},
 };
 
 use crate::{Collect, collect::Trace};
+
+pub(crate) type PtrMeta<T> = <T as Pointee>::Metadata;
 
 /// A generalized pointer metadata type.
 ///
@@ -33,9 +35,17 @@ use crate::{Collect, collect::Trace};
 ///   valid.
 /// - The reference type must inherit the "reference-like" behavior, just like
 ///   the built-in `&T`.
+/// - If `Ptr` and `Ref` are built-in pointer types (i.e., `NonNull<T>` and `&'a T`),
+///   the `with_addr`, `addr`, and `as_ref` methods must forward to the built-in
+///   equivalents directly.
 ///
 /// [built-in pointee type]: core::ptr::Pointee
-pub unsafe trait Metadata<'a, T: ?Sized + 'a>: Copy + PartialEq {
+pub unsafe trait Metadata<
+    'a,
+    T: ?Sized + 'a + Pointee<Metadata = Marker>,
+    Marker = <T as Pointee>::Metadata,
+>: Copy + PartialEq
+{
     /// The associated pointer type.
     type Ptr: Copy = NonNull<T>;
 
@@ -46,6 +56,11 @@ pub unsafe trait Metadata<'a, T: ?Sized + 'a>: Copy + PartialEq {
     ///
     /// This function is equivalent to [`NonNull::from_raw_parts`].
     fn with_addr(self, addr: NonNull<()>) -> Self::Ptr;
+
+    /// Returns the address of the pointer.
+    ///
+    /// This function is equivalent to [`NonNull::as_ptr`].
+    fn addr(ptr: Self::Ptr) -> NonNull<()>;
 
     /// Returns a shared reference to the pointed value.
     ///
@@ -61,6 +76,15 @@ pub unsafe trait Metadata<'a, T: ?Sized + 'a>: Copy + PartialEq {
     unsafe fn as_ref(ptr: Self::Ptr) -> Self::Ref;
 }
 
+/// A trait alias that implies the [`Metadata`] trait for built-in pointer types.
+pub trait PtrMetadata<'a, T: ?Sized + 'a>: Metadata<'a, T, Ptr = NonNull<T>, Ref = &'a T> {}
+impl<'a, T, M> PtrMetadata<'a, T> for M
+where
+    T: ?Sized + 'a,
+    M: Metadata<'a, T, Ptr = NonNull<T>, Ref = &'a T>,
+{
+}
+
 /// A generalized pointer metadata type with layout information.
 ///
 /// # Safety
@@ -68,7 +92,12 @@ pub unsafe trait Metadata<'a, T: ?Sized + 'a>: Copy + PartialEq {
 /// - The `layout` function must return a valid layout of the pointee type.
 /// - The `drop_in_place` function must drop the pointee type correctly, if
 ///   the provided pointer is valid.
-pub unsafe trait MetaLayout<'a, T: ?Sized + 'a>: Metadata<'a, T> {
+pub unsafe trait MetaLayout<
+    'a,
+    T: ?Sized + 'a + Pointee<Metadata = Marker>,
+    Marker = <T as Pointee>::Metadata,
+>: Metadata<'a, T, Marker>
+{
     /// Returns the layout of its associated pointee object.
     fn layout(self) -> Result<Layout, LayoutError>;
 
@@ -112,10 +141,15 @@ pub unsafe trait MetaCollect<'gc, 'a, T: ?Sized + 'a>: MetaLayout<'a, T> {
 
 macro_rules! impl_sized {
     ($($t:ty $(: ($($bounds:tt)*))?),* $(,)?) => {$(
-        unsafe impl<'a, T: 'a, $($($bounds)*)?> Metadata<'a, T> for $t {
+        unsafe impl<'a, T: 'a, $($($bounds)*)?> Metadata<'a, T, ()> for $t {
             #[inline]
             fn with_addr(self, addr: NonNull<()>) -> NonNull<T> {
                 addr.cast()
+            }
+
+            #[inline]
+            fn addr(ptr: NonNull<T>) -> NonNull<()> {
+                ptr.cast()
             }
 
             #[inline]
@@ -124,7 +158,7 @@ macro_rules! impl_sized {
             }
         }
 
-        unsafe impl<'a, T: 'a, $($($bounds)*)?> MetaLayout<'a, T> for $t {
+        unsafe impl<'a, T: 'a, $($($bounds)*)?> MetaLayout<'a, T, ()> for $t {
             #[inline]
             fn layout(self) -> Result<Layout, LayoutError> {
                 Ok(Layout::new::<T>())
@@ -165,6 +199,11 @@ unsafe impl<'a, T: 'a> Metadata<'a, [T]> for usize {
     #[inline]
     fn with_addr(self, addr: NonNull<()>) -> NonNull<[T]> {
         NonNull::from_raw_parts(addr, self)
+    }
+
+    #[inline]
+    fn addr(ptr: NonNull<[T]>) -> NonNull<()> {
+        ptr.cast()
     }
 
     #[inline]
@@ -209,6 +248,11 @@ unsafe impl<'a> Metadata<'a, str> for usize {
     }
 
     #[inline]
+    fn addr(ptr: NonNull<str>) -> NonNull<()> {
+        ptr.cast()
+    }
+
+    #[inline]
     unsafe fn as_ref(ptr: NonNull<str>) -> &'a str {
         unsafe { ptr.as_ref() }
     }
@@ -236,5 +280,43 @@ unsafe impl<'gc, 'a> MetaCollect<'gc, 'a, str> for usize {
     #[inline]
     fn trace<C: Trace<'gc>>(_: &'a str, _: &mut C) {
         // Strings are just arrays of bytes, which doesn't need trace.
+    }
+}
+
+// Implementation for trait objects.
+
+unsafe impl<'a, U, Dyn> Metadata<'a, U, DynMetadata<Dyn>> for DynMetadata<Dyn>
+where
+    U: ?Sized + Pointee<Metadata = Self> + 'a,
+    Dyn: ?Sized,
+{
+    #[inline]
+    fn with_addr(self, addr: NonNull<()>) -> NonNull<U> {
+        NonNull::from_raw_parts(addr, self)
+    }
+
+    #[inline]
+    fn addr(ptr: NonNull<U>) -> NonNull<()> {
+        ptr.cast()
+    }
+
+    #[inline]
+    unsafe fn as_ref(ptr: NonNull<U>) -> &'a U {
+        unsafe { ptr.as_ref() }
+    }
+}
+
+unsafe impl<'a, U, Dyn> MetaLayout<'a, U, DynMetadata<Dyn>> for DynMetadata<Dyn>
+where
+    U: ?Sized + Pointee<Metadata = Self> + 'a,
+    Dyn: ?Sized,
+{
+    fn layout(self) -> Result<Layout, LayoutError> {
+        let ptr: NonNull<U> = NonNull::from_raw_parts(NonNull::<()>::dangling(), self);
+        Ok(unsafe { Layout::for_value_raw(ptr.as_ptr()) })
+    }
+
+    unsafe fn drop_in_place(to_drop: Self::Ptr) {
+        unsafe { to_drop.drop_in_place() };
     }
 }

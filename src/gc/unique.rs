@@ -1,6 +1,6 @@
 use core::{
     any::Any,
-    borrow::Borrow,
+    borrow::{Borrow, BorrowMut},
     error::Error,
     fmt::{self, Debug, Display, Pointer},
     hash::{Hash, Hasher},
@@ -14,7 +14,7 @@ use crate::{
     Gc,
     collect::{Collect, Trace},
     context::Mutation,
-    ptr::MetaCollect,
+    ptr::{MetaCollect, Metadata, PtrMeta, PtrMetadata},
     types::{GcBox, Invariant},
     vec::Vec,
 };
@@ -27,70 +27,103 @@ use crate::{
 /// [`Gc`]: crate::Gc
 /// [`Collect`]: crate::Collect
 #[repr(transparent)]
-pub struct Unique<'gc, T: ?Sized + 'gc> {
-    ptr: GcBox,
-    _invariant: Invariant<'gc, T>,
+pub struct Unique<'gc, T: ?Sized + 'gc, M: 'gc = PtrMeta<T>> {
+    pub(crate) ptr: GcBox,
+    _invariant: Invariant<'gc, T, M>,
 }
 
-impl<'gc, T: Debug + ?Sized + 'gc> Debug for Unique<'gc, T> {
+impl<'gc, 'a, T: Debug, M> Debug for Unique<'gc, T, M>
+where
+    T: ?Sized + 'gc + 'a,
+    M: PtrMetadata<'a, T>,
+{
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt::Debug::fmt(&**self, fmt)
     }
 }
 
-impl<'gc, T: ?Sized + 'gc> Pointer for Unique<'gc, T> {
+impl<'gc, 'a, T: ?Sized + 'gc + 'a, M: Metadata<'a, T>> Pointer for Unique<'gc, T, M> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Pointer::fmt(&Unique::as_ptr(self), fmt)
+        fmt::Pointer::fmt(&M::addr(Unique::as_raw(self)), fmt)
     }
 }
 
-impl<'gc, T: Display + ?Sized + 'gc> Display for Unique<'gc, T> {
+impl<'gc, 'a, T: Display, M> Display for Unique<'gc, T, M>
+where
+    T: ?Sized + 'gc + 'a,
+    M: PtrMetadata<'a, T>,
+{
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt::Display::fmt(&**self, fmt)
     }
 }
 
-unsafe impl<'gc, T: ?Sized + 'gc> Collect<'gc> for Unique<'gc, T> {
-    const NEEDS_TRACE: bool = true;
-
+unsafe impl<'gc, T: ?Sized + 'gc, M: 'gc> Collect<'gc> for Unique<'gc, T, M> {
     fn trace<U: Trace<'gc>>(&self, cc: &mut U) {
-        // SAFETY: The constructed `Gc` pointer won't access the underlying value;
-        // the dropping process will not start either until the next collection phase after
-        // the current `Unique` is dropped.
-        cc.trace_gc(unsafe { Gc::from_ptr(self.ptr.unerased_value::<()>()) });
+        cc.trace_unique(self);
     }
 }
 
-impl<'gc, T: ?Sized + 'gc> Deref for Unique<'gc, T> {
+impl<'gc, 'a, T, M> Deref for Unique<'gc, T, M>
+where
+    T: ?Sized + 'gc + 'a,
+    M: PtrMetadata<'a, T>,
+{
     type Target = T;
 
     #[inline]
     fn deref(&self) -> &T {
-        unsafe { &*self.ptr.unerased_value::<T>() }
+        unsafe { self.ptr.unerase::<T, M>().as_ref() }
     }
 }
 
-impl<'gc, T: ?Sized + 'gc> DerefMut for Unique<'gc, T> {
+impl<'gc, 'a, T, M> DerefMut for Unique<'gc, T, M>
+where
+    T: ?Sized + 'gc + 'a,
+    M: PtrMetadata<'a, T>,
+{
     #[inline]
     fn deref_mut(&mut self) -> &mut T {
-        unsafe { &mut *self.ptr.unerased_value::<T>() }
+        unsafe { self.ptr.unerase::<T, M>().as_mut() }
     }
 }
 
-impl<'gc, T: ?Sized + 'gc> AsRef<T> for Unique<'gc, T> {
+impl<'gc, 'a, T, M> AsRef<T> for Unique<'gc, T, M>
+where
+    T: ?Sized + 'gc + 'a,
+    M: PtrMetadata<'a, T>,
+{
     fn as_ref(&self) -> &T {
         self
     }
 }
 
-impl<'gc, T: ?Sized + 'gc> AsMut<T> for Unique<'gc, T> {
+impl<'gc, 'a, T, M> AsMut<T> for Unique<'gc, T, M>
+where
+    T: ?Sized + 'gc + 'a,
+    M: PtrMetadata<'a, T>,
+{
     fn as_mut(&mut self) -> &mut T {
         self
     }
 }
 
-impl<'gc, T: ?Sized + 'gc> Borrow<T> for Unique<'gc, T> {
+impl<'gc, 'a, T, M> Borrow<T> for Unique<'gc, T, M>
+where
+    T: ?Sized + 'gc + 'a,
+    M: PtrMetadata<'a, T>,
+{
     fn borrow(&self) -> &T {
+        self
+    }
+}
+
+impl<'gc, 'a, T, M> BorrowMut<T> for Unique<'gc, T, M>
+where
+    T: ?Sized + 'gc + 'a,
+    M: PtrMetadata<'a, T>,
+{
+    fn borrow_mut(&mut self) -> &mut T {
         self
     }
 }
@@ -123,7 +156,7 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, T> {
 
         let ptr = mc.allocate::<T, (), false>(());
         // SAFETY: `ptr` is a valid uninit pointer to `T`.
-        unsafe { ptr.unerased_value::<T>().write(t) };
+        unsafe { ptr.unerase::<T, ()>().write(t) };
         Unique {
             ptr,
             _invariant: PhantomData,
@@ -135,12 +168,12 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, T> {
     pub fn new_unsize<'a, Dyn>(mc: &Mutation<'gc>, t: T) -> Unique<'gc, Dyn>
     where
         T: Unsize<Dyn> + 'a,
-        Dyn: 'gc + ?Sized + Pointee<Metadata: MetaCollect<'gc, 'a, T>>,
+        Dyn: 'gc + ?Sized + Pointee<Metadata: MetaCollect<'gc, 'a, T, Ptr = NonNull<T>>>,
     {
         let metadata = core::ptr::metadata(&t as &Dyn);
         let gc_box = mc.allocate::<T, _, false>(metadata);
         // SAFETY: `ptr` is a uninit pointer to `Dyn` which can receive a `T`.
-        unsafe { gc_box.unerased_value::<Dyn>().cast::<T>().write(t) };
+        unsafe { gc_box.unerase::<T, PtrMeta<Dyn>>().write(t) };
 
         Unique {
             ptr: gc_box,
@@ -512,31 +545,30 @@ impl<'gc, T: ?Sized + 'gc> Unique<'gc, T> {
             _invariant: PhantomData,
         }
     }
+}
+
+impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: Metadata<'a, T>> Unique<'gc, T, M> {
+    /// Returns a raw pointer to the `Unique`'s contents.
+    ///
+    /// Very few guarantees are given about this pointer, except that it is properly
+    /// aligned, and points to a valid instance of `T`
+    pub fn as_raw(this: &Self) -> M::Ptr {
+        unsafe { this.ptr.unerase::<T, M>() }
+    }
 
     /// Returns a raw mutable pointer to the `Unique`'s contents.
     ///
     /// Very few guarantees are given about this pointer, except that it is properly
     /// aligned, points to a valid instance of `T`, and may be written to.
-    pub fn as_mut_ptr(this: &mut Unique<'gc, T>) -> *mut T {
-        // SAFETY: `Unique` is guaranteed to contain a pointer to a valid instance of a GC box typed `T`.
-        unsafe { this.ptr.unerased_value::<T>() }
-    }
-
-    /// Returns a raw pointer to the `Unique`'s contents.
-    ///
-    /// Very few guarantees are given about this pointer, except that it is properly
-    /// aligned, and points to a valid instance of `T`
-    pub fn as_ptr(this: &Unique<'gc, T>) -> *const T {
-        // SAFETY: `Unique` is guaranteed to contain a pointer to a valid instance of a GC box typed `T`.
-        unsafe { this.ptr.unerased_value::<T>() }
+    pub fn as_raw_mut(this: &mut Self) -> M::Ptr {
+        unsafe { this.ptr.unerase::<T, M>() }
     }
 
     /// Transforms the `Unique` into a raw pointer.
     ///
     /// The pointer is guaranteed to be valid only in the current collection phase.
-    pub fn into_raw(this: Unique<'gc, T>) -> *mut T {
-        // SAFETY: `Unique` is guaranteed to contain a pointer to a valid instance of a GC box typed `T`.
-        unsafe { this.ptr.unerased_value::<T>() }
+    pub fn into_raw(this: Self) -> M::Ptr {
+        unsafe { this.ptr.unerase::<T, M>() }
     }
 
     /// Constructs a `Unique` from a raw pointer.
@@ -546,18 +578,58 @@ impl<'gc, T: ?Sized + 'gc> Unique<'gc, T> {
     /// The given pointer must have been obtained from [`Unique::as_ptr`], [`Unique::into_raw`],
     /// or [`Gc::as_ptr`]. There must also exist no other garbage collected pointers
     /// which point to the same allocation.
-    pub unsafe fn from_raw(raw: *mut T) -> Unique<'gc, T> {
+    pub unsafe fn from_raw(raw: NonNull<()>) -> Unique<'gc, T, M> {
         Unique {
             // SAFETY: `raw` is valid and aligned guaranteed by the caller.
-            ptr: unsafe { GcBox::erase(NonNull::new_unchecked(raw)) },
+            ptr: unsafe { GcBox::from_raw(raw) },
             _invariant: PhantomData,
         }
     }
 
     /// Converts the `Unique` into a regular [`Gc`].
-    pub fn into_gc(self) -> Gc<'gc, T> {
+    pub fn into_gc(self) -> Gc<'gc, T, M> {
         // SAFETY: Trivial.
-        unsafe { Gc::from_ptr(Unique::into_raw(self)) }
+        unsafe { Gc::from_raw(M::addr(Unique::into_raw(self))) }
+    }
+}
+
+impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: PtrMetadata<'a, T>> Unique<'gc, T, M> {
+    /// Returns a raw pointer to the `Unique`'s contents.
+    ///
+    /// Very few guarantees are given about this pointer, except that it is properly
+    /// aligned, and points to a valid instance of `T`
+    pub fn as_ptr(this: &Self) -> *const T {
+        unsafe { this.ptr.unerase::<T, M>().as_ptr() }
+    }
+
+    /// Returns a raw mutable pointer to the `Unique`'s contents.
+    ///
+    /// Very few guarantees are given about this pointer, except that it is properly
+    /// aligned, points to a valid instance of `T`, and may be written to.
+    pub fn as_mut_ptr(this: &mut Self) -> *mut T {
+        unsafe { this.ptr.unerase::<T, M>().as_ptr() }
+    }
+
+    /// Transforms the `Unique` into a raw pointer.
+    ///
+    /// The pointer is guaranteed to be valid only in the current collection phase.
+    pub fn into_ptr(this: Self) -> *mut T {
+        unsafe { this.ptr.unerase::<T, M>().as_ptr() }
+    }
+
+    /// Constructs a `Unique` from a raw pointer.
+    ///
+    /// # Safety
+    ///
+    /// The given pointer must have been obtained from [`Unique::as_ptr`], [`Unique::into_raw`],
+    /// or [`Gc::as_ptr`]. There must also exist no other garbage collected pointers
+    /// which point to the same allocation.
+    pub unsafe fn from_ptr(raw: *mut T) -> Unique<'gc, T, M> {
+        Unique {
+            // SAFETY: `raw` is valid and aligned guaranteed by the caller.
+            ptr: unsafe { GcBox::erase::<T, M>(NonNull::new_unchecked(raw)) },
+            _invariant: PhantomData,
+        }
     }
 }
 
@@ -570,7 +642,7 @@ impl<'gc, T: 'gc> Unique<'gc, [T]> {
         unsafe { self.ptr.header().reset_vtable::<[MaybeUninit<T>], usize>() };
         self.ptr.header().set_needs_trace(false);
 
-        let (ptr, len) = Self::into_raw(self).to_raw_parts();
+        let (ptr, len) = Self::into_ptr(self).to_raw_parts();
         // SAFETY: `ptr` is valid and aligned guaranteed by the caller.
         unsafe { Vec::from_raw_parts(ptr.cast(), len, len) }
     }
@@ -606,47 +678,68 @@ impl<'a, 'gc, T: 'gc> IntoIterator for &'a mut Unique<'gc, [T]> {
     }
 }
 
-impl<'gc, T: PartialEq<U> + ?Sized + 'gc, U: ?Sized + 'gc> PartialEq<Unique<'gc, U>>
-    for Unique<'gc, T>
+impl<'gc, 'a, 'b, T, U, M, N> PartialEq<Unique<'gc, U, N>> for Unique<'gc, T, M>
+where
+    T: PartialEq<U> + ?Sized + 'gc + 'a,
+    U: ?Sized + 'gc + 'b,
+    M: PtrMetadata<'a, T> + 'gc,
+    N: PtrMetadata<'b, U> + 'gc,
 {
-    fn eq(&self, other: &Unique<'gc, U>) -> bool {
+    fn eq(&self, other: &Unique<'gc, U, N>) -> bool {
         (**self).eq(other)
     }
 }
 
-impl<'gc, T: Eq + ?Sized + 'gc> Eq for Unique<'gc, T> {}
-
-impl<'gc, T: PartialOrd<U> + ?Sized + 'gc, U: ?Sized + 'gc> PartialOrd<Unique<'gc, U>>
-    for Unique<'gc, T>
+impl<'gc, 'a, T, M> Eq for Unique<'gc, T, M>
+where
+    T: Eq + ?Sized + 'gc + 'a,
+    M: PtrMetadata<'a, T> + 'gc,
 {
-    fn partial_cmp(&self, other: &Unique<'gc, U>) -> Option<core::cmp::Ordering> {
+}
+
+impl<'gc, 'a, 'b, T, U, M, N> PartialOrd<Unique<'gc, U, N>> for Unique<'gc, T, M>
+where
+    T: PartialOrd<U> + ?Sized + 'gc + 'a,
+    U: ?Sized + 'gc + 'b,
+    M: PtrMetadata<'a, T> + 'gc,
+    N: PtrMetadata<'b, U> + 'gc,
+{
+    fn partial_cmp(&self, other: &Unique<'gc, U, N>) -> Option<core::cmp::Ordering> {
         (**self).partial_cmp(other)
     }
 
-    fn le(&self, other: &Unique<'gc, U>) -> bool {
+    fn le(&self, other: &Unique<'gc, U, N>) -> bool {
         (**self).le(other)
     }
 
-    fn lt(&self, other: &Unique<'gc, U>) -> bool {
+    fn lt(&self, other: &Unique<'gc, U, N>) -> bool {
         (**self).lt(other)
     }
 
-    fn ge(&self, other: &Unique<'gc, U>) -> bool {
+    fn ge(&self, other: &Unique<'gc, U, N>) -> bool {
         (**self).ge(other)
     }
 
-    fn gt(&self, other: &Unique<'gc, U>) -> bool {
+    fn gt(&self, other: &Unique<'gc, U, N>) -> bool {
         (**self).gt(other)
     }
 }
 
-impl<'gc, T: Ord + ?Sized + 'gc> Ord for Unique<'gc, T> {
+impl<'gc, 'a, T, M> Ord for Unique<'gc, T, M>
+where
+    T: Ord + ?Sized + 'gc + 'a,
+    M: PtrMetadata<'a, T> + 'gc,
+{
     fn cmp(&self, other: &Self) -> core::cmp::Ordering {
         (**self).cmp(other)
     }
 }
 
-impl<'gc, T: Hash + ?Sized + 'gc> Hash for Unique<'gc, T> {
+impl<'gc, 'a, T, M> Hash for Unique<'gc, T, M>
+where
+    T: Hash + ?Sized + 'gc + 'a,
+    M: PtrMetadata<'a, T> + 'gc,
+{
     fn hash<H: Hasher>(&self, state: &mut H) {
         (**self).hash(state)
     }
@@ -664,8 +757,12 @@ impl<'gc, T: 'gc + Collect<'gc>> From<(Vec<'gc, T>, &Mutation<'gc>)> for Unique<
     }
 }
 
-impl<'gc, T: ?Sized + 'gc> From<Unique<'gc, T>> for Gc<'gc, T> {
-    fn from(value: Unique<'gc, T>) -> Self {
+impl<'gc, 'a, T, M> From<Unique<'gc, T, M>> for Gc<'gc, T, M>
+where
+    T: ?Sized + 'gc + 'a,
+    M: Metadata<'a, T> + 'gc,
+{
+    fn from(value: Unique<'gc, T, M>) -> Self {
         value.into_gc()
     }
 }

@@ -1,11 +1,11 @@
 use core::alloc::{Allocator, Layout};
 use core::cell::Cell;
 use core::marker::PhantomData;
-use core::ptr::{NonNull, Pointee};
+use core::ptr::NonNull;
 use core::{fmt, ptr};
 
 use crate::context::Context;
-use crate::ptr::MetaCollect;
+use crate::ptr::{MetaCollect, Metadata};
 
 /// A thin-pointer-sized box containing a type-erased GC object.
 /// Stores the metadata required by the GC algorithm inline.
@@ -83,25 +83,26 @@ impl GcBox {
     /// **SAFETY:** The pointer must point to a valid GC box allocated
     /// in a `Box`.
     #[inline(always)]
-    pub(crate) unsafe fn erase<T: ?Sized>(ptr: NonNull<T>) -> Self {
-        // This cast is sound because GC box is `repr(C)`.
-        unsafe {
-            let (erased, metadata) = ptr.to_raw_parts();
-            let gc_box = Self(erased.cast());
-            debug_assert_eq!(gc_box.metadata::<<T as Pointee>::Metadata>(), metadata);
-            gc_box
-        }
+    pub(crate) unsafe fn erase<'a, T, M>(ptr: M::Ptr) -> Self
+    where
+        T: ?Sized + 'a,
+        M: Metadata<'a, T>,
+    {
+        let addr = M::addr(ptr);
+        unsafe { Self::from_raw(addr) }
     }
 
     /// Gets a pointer to the value stored inside this box.
     /// `T` must be the same type that was used with `erase`, so that
     /// we can correctly compute the field offset.
     #[inline(always)]
-    pub(crate) unsafe fn unerased_value<T: ?Sized>(&self) -> *mut T {
-        unsafe {
-            let metadata = self.metadata::<<T as Pointee>::Metadata>();
-            ptr::from_raw_parts_mut(self.0.as_ptr(), metadata)
-        }
+    pub(crate) unsafe fn unerase<'a, T, M>(&self) -> M::Ptr
+    where
+        T: ?Sized + 'a,
+        M: Metadata<'a, T>,
+    {
+        let metadata = unsafe { self.metadata::<M>() };
+        metadata.with_addr(self.0)
     }
 
     #[inline(always)]

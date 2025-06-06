@@ -2,43 +2,45 @@ use crate::Mutation;
 use crate::collect::{Collect, Trace};
 use crate::context::Finalization;
 use crate::gc::Gc;
+use crate::ptr::{Metadata, PtrMeta, PtrMetadata};
 
 use core::fmt::{self, Debug};
+use core::ptr::NonNull;
 
 #[repr(transparent)]
-pub struct Weak<'gc, T: ?Sized + 'gc> {
-    pub(crate) inner: Gc<'gc, T>,
+pub struct Weak<'gc, T: ?Sized + 'gc, M: 'gc = PtrMeta<T>> {
+    pub(crate) inner: Gc<'gc, T, M>,
 }
 
-impl<'gc, T: ?Sized + 'gc> Copy for Weak<'gc, T> {}
+impl<'gc, T: ?Sized + 'gc, M: 'gc> Copy for Weak<'gc, T, M> {}
 
-impl<'gc, T: ?Sized + 'gc> Clone for Weak<'gc, T> {
+impl<'gc, T: ?Sized + 'gc, M: 'gc> Clone for Weak<'gc, T, M> {
     #[inline]
-    fn clone(&self) -> Weak<'gc, T> {
+    fn clone(&self) -> Weak<'gc, T, M> {
         *self
     }
 }
 
-impl<'gc, T: ?Sized + 'gc> Debug for Weak<'gc, T> {
+impl<'gc, T: ?Sized + 'gc, M: 'gc> Debug for Weak<'gc, T, M> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         write!(fmt, "(GC'd Weak)")
     }
 }
 
-unsafe impl<'gc, T: ?Sized + 'gc> Collect<'gc> for Weak<'gc, T> {
+unsafe impl<'gc, T: ?Sized + 'gc, M: 'gc> Collect<'gc> for Weak<'gc, T, M> {
     #[inline]
     fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
         cc.trace_weak(*self)
     }
 }
 
-impl<'gc, T: ?Sized + 'gc> Weak<'gc, T> {
+impl<'gc, T: ?Sized + 'gc, M: 'gc> Weak<'gc, T, M> {
     /// If the `Weak` pointer can be safely upgraded to a strong pointer, upgrade it.
     ///
     /// This will fail if the value the `Weak` points to is dropped, or if we are in the
     /// [`crate::arena::CollectionPhase::Sweeping`] phase and we know the pointer *will* be dropped.
     #[inline]
-    pub fn upgrade(self, mc: &Mutation<'gc>) -> Option<Gc<'gc, T>> {
+    pub fn upgrade(self, mc: &Mutation<'gc>) -> Option<Gc<'gc, T, M>> {
         mc.upgrade(self.inner.ptr).then_some(self.inner)
     }
 
@@ -55,7 +57,9 @@ impl<'gc, T: ?Sized + 'gc> Weak<'gc, T> {
     pub fn is_dropped(self) -> bool {
         !self.inner.ptr.header().is_live()
     }
+}
 
+impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: Metadata<'a, T>> Weak<'gc, T, M> {
     /// Returns true when a pointer is *dead* during finalization.
     ///
     /// This is a weaker condition than being *dropped*, as the pointer *may* still be valid. Being
@@ -86,7 +90,7 @@ impl<'gc, T: ?Sized + 'gc> Weak<'gc, T> {
     /// stored anywhere, the value and all transitively reachable values are still guaranteed to not
     /// be dropped this collection cycle.
     #[inline]
-    pub fn resurrect(self, fc: &Finalization<'gc>) -> Option<Gc<'gc, T>> {
+    pub fn resurrect(self, fc: &Finalization<'gc>) -> Option<Gc<'gc, T, M>> {
         // SAFETY: We know that we are currently marking, so any non-dropped pointer is safe to
         // resurrect.
         if self.inner.ptr.header().is_live() {
@@ -102,27 +106,34 @@ impl<'gc, T: ?Sized + 'gc> Weak<'gc, T> {
     /// Similarly to `Rc::ptr_eq` and `Arc::ptr_eq`, this function ignores the metadata of `dyn`
     /// pointers.
     #[inline]
-    pub fn ptr_eq(this: Weak<'gc, T>, other: Weak<'gc, T>) -> bool {
-        // TODO: Equivalent to `core::ptr::addr_eq`:
-        // https://github.com/rust-lang/rust/issues/116324
-        this.as_ptr() as *const () == other.as_ptr() as *const ()
+    pub fn ptr_eq(this: Self, other: Self) -> bool {
+        M::addr(this.into_raw()) == M::addr(other.into_raw())
     }
 
+    #[inline]
+    pub fn into_raw(self) -> M::Ptr {
+        Gc::into_raw(self.inner)
+    }
+
+    /// Retrieve a `Weak` from a raw pointer obtained from `Weak::as_raw`
+    ///
+    /// # Safety
+    /// The provided pointer must have been obtained from `Weak::as_raw` or `Gc::as_raw`, and
+    /// the pointer must not have been *fully* collected yet (it may be a dropped but valid weak
+    /// pointer).
+    #[inline]
+    pub unsafe fn from_raw(raw: NonNull<()>) -> Weak<'gc, T, M> {
+        // SAFETY: The caller guarantees that this is safe.
+        Weak {
+            inner: unsafe { Gc::from_raw(raw) },
+        }
+    }
+}
+
+impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: PtrMetadata<'a, T>> Weak<'gc, T, M> {
     #[inline]
     pub fn as_ptr(self) -> *const T {
         Gc::as_ptr(self.inner)
-    }
-
-    /// Cast the internal pointer to a different type.
-    ///
-    /// # Safety
-    /// It must be valid to dereference a `*mut U` that has come from casting a `*mut T`.
-    #[inline]
-    pub unsafe fn cast<U: 'gc>(this: Weak<'gc, T>) -> Weak<'gc, U> {
-        // SAFETY: The caller guarantees that this is safe.
-        Weak {
-            inner: unsafe { Gc::cast::<U>(this.inner) },
-        }
     }
 
     /// Retrieve a `Weak` from a raw pointer obtained from `Weak::as_ptr`
@@ -132,10 +143,24 @@ impl<'gc, T: ?Sized + 'gc> Weak<'gc, T> {
     /// the pointer must not have been *fully* collected yet (it may be a dropped but valid weak
     /// pointer).
     #[inline]
-    pub unsafe fn from_ptr(ptr: *const T) -> Weak<'gc, T> {
+    pub unsafe fn from_ptr(ptr: *const T) -> Weak<'gc, T, M> {
         // SAFETY: The caller guarantees that this is safe.
         Weak {
             inner: unsafe { Gc::from_ptr(ptr) },
+        }
+    }
+}
+
+impl<'gc, T: 'gc + ?Sized, M: 'gc> Weak<'gc, T, M> {
+    /// Cast the internal pointer to a different type.
+    ///
+    /// # Safety
+    /// It must be valid to dereference a `*mut U` that has come from casting a `*mut T`.
+    #[inline]
+    pub unsafe fn cast<U: 'gc, N: 'gc>(this: Weak<'gc, T, M>) -> Weak<'gc, U, N> {
+        // SAFETY: The caller guarantees that this is safe.
+        Weak {
+            inner: unsafe { Gc::cast::<U, N>(this.inner) },
         }
     }
 }

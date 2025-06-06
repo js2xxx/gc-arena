@@ -6,6 +6,7 @@ use crate::{
     Gc, Mutation, Rootable,
     arena::Root,
     collect::{Collect, Trace},
+    ptr::{PtrMeta, PtrMetadata},
     vec::Vec,
 };
 
@@ -151,7 +152,10 @@ impl<R: for<'gc> Rootable<'gc>> Clone for DynamicRoot<R> {
     }
 }
 
-impl<R: for<'gc> Rootable<'gc>> DynamicRoot<R> {
+impl<R: for<'gc> Rootable<'gc>> DynamicRoot<R>
+where
+    for<'gc> PtrMeta<Root<'gc, R>>: PtrMetadata<'gc, Root<'gc, R>>,
+{
     /// Get a pointer to the held object.
     ///
     /// This returns [`Gc::as_ptr`] for the [`Gc`] provided when the `DynamicRoot` is stashed.
@@ -170,7 +174,9 @@ impl<R: for<'gc> Rootable<'gc>> DynamicRoot<R> {
     /// the arena that holds the parent `DynamicRootSet`.
     #[inline]
     pub fn as_ptr<'gc>(&self) -> *const Root<'gc, R> {
-        unsafe { mem::transmute::<&Root<'static, R>, &Root<'gc, R>>(&self.ptr) as *const _ }
+        unsafe {
+            mem::transmute::<*const Root<'static, R>, *const Root<'gc, R>>(Gc::as_ptr(self.ptr))
+        }
     }
 }
 
