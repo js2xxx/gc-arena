@@ -2,7 +2,7 @@ use core::alloc::{Allocator, Layout, LayoutError};
 use core::cell::Cell;
 use core::marker::{PhantomData, Unsize};
 use core::ptr::{DynMetadata, NonNull, Pointee};
-use core::{fmt, mem, ptr};
+use core::{fmt, ptr};
 
 use crate::{collect::Collect, context::Context};
 
@@ -35,33 +35,49 @@ impl<Dyn: ?Sized, T: ?Sized + Pointee<Metadata = Self>> MetaLayout<T> for DynMet
 /// for its typed counterpart).
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(crate) struct GcBox(NonNull<GcBoxInner<()>>);
+pub(crate) struct GcBox(NonNull<()>);
 
 impl GcBox {
-    pub(crate) fn box_layout<T>(metadata: T::Metadata) -> Result<(Layout, usize), LayoutError>
+    pub(crate) fn box_layout<T>(metadata: T::Metadata) -> Option<(Layout, usize)>
     where
         T: ?Sized + Pointee<Metadata: MetaLayout<T>>,
     {
-        let value = metadata.layout()?;
+        macro_rules! ctry {
+            ($e:expr) => {
+                match $e {
+                    Ok(v) => v,
+                    Err(_) => return None,
+                }
+            };
+        }
+
+        let value = ctry!(metadata.layout());
         let header = Layout::new::<GcBoxHeader>();
         let metadata = Layout::new::<T::Metadata>();
 
-        let (layout, offset) = metadata.extend(header)?;
-        let (layout, _) = layout.extend(value)?;
-        Ok((layout, offset))
-    }
-
-    const fn metadata_offset<T: ?Sized>() -> usize {
-        match Layout::new::<<T as Pointee>::Metadata>().extend(Layout::new::<GcBoxHeader>()) {
-            Ok((_, offset)) => offset,
-            Err(_) => panic!("Layout calculation failed"),
+        let (layout, header_offset) = ctry!(metadata.extend(header));
+        if header_offset != metadata.size() {
+            return None;
         }
+
+        let (layout, value_offset) = ctry!(layout.extend(value));
+
+        let header_addr = value_offset - header.size();
+        if header_addr & (header.align() - 1) != 0 {
+            return None;
+        }
+        let metadata_addr = header_addr - metadata.size();
+        if metadata_addr & (metadata.align() - 1) != 0 {
+            return None;
+        }
+
+        Some((layout, value_offset))
     }
 
     /// # Safety
     ///
     /// `ptr` must point to a valid `GcBoxInner`.
-    pub(crate) unsafe fn from_raw(ptr: NonNull<GcBoxInner<()>>) -> Self {
+    pub(crate) unsafe fn from_raw(ptr: NonNull<()>) -> Self {
         Self(ptr)
     }
 
@@ -70,7 +86,7 @@ impl GcBox {
     /// **SAFETY:** The pointer must point to a valid `GcBoxInner` allocated
     /// in a `Box`.
     #[inline(always)]
-    pub(crate) unsafe fn erase<T: ?Sized>(ptr: NonNull<GcBoxInner<T>>) -> Self {
+    pub(crate) unsafe fn erase<T: ?Sized>(ptr: NonNull<T>) -> Self {
         // This cast is sound because `GcBoxInner` is `repr(C)`.
         unsafe {
             let (erased, metadata) = ptr.to_raw_parts();
@@ -87,15 +103,13 @@ impl GcBox {
     pub(crate) unsafe fn unerased_value<T: ?Sized>(&self) -> *mut T {
         unsafe {
             let metadata = self.metadata::<T>();
-            let ptr: *mut GcBoxInner<T> = ptr::from_raw_parts_mut(self.0.as_ptr(), metadata);
-            // Don't create a reference, to keep the full provenance.
-            // Also, this gives us interior mutability "for free".
-            (&raw mut (*ptr).value) as *mut T
+            ptr::from_raw_parts_mut(self.0.as_ptr(), metadata)
         }
     }
 
+    #[inline(always)]
     unsafe fn metadata<T: ?Sized>(&self) -> <T as Pointee>::Metadata {
-        let offset = const { Self::metadata_offset::<T>() };
+        let offset = const { size_of::<GcBoxHeader>() + size_of::<<T as Pointee>::Metadata>() };
         unsafe {
             let ptr = self.0.byte_sub(offset);
             ptr.cast().read()
@@ -104,7 +118,11 @@ impl GcBox {
 
     #[inline(always)]
     pub(crate) fn header(&self) -> &GcBoxHeader {
-        unsafe { &self.0.as_ref().header }
+        let offset = const { size_of::<GcBoxHeader>() };
+        unsafe {
+            let ptr = self.0.byte_sub(offset);
+            ptr.cast().as_ref()
+        }
     }
 
     /// Returns the (shallow) size occupied by this box in memory.
@@ -405,16 +423,6 @@ impl CollectVTable {
             },
         }
     }
-}
-
-/// A typed GC'd value, together with its metadata.
-/// This type is never manipulated directly by the GC algorithm, allowing
-/// user-facing `Gc`s to freely cast their pointer to it.
-#[repr(C)]
-pub(crate) struct GcBoxInner<T: ?Sized> {
-    pub(crate) header: GcBoxHeader,
-    /// The typed value stored in this `GcBox`.
-    pub(crate) value: mem::ManuallyDrop<T>,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]

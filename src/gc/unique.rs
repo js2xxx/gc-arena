@@ -1,5 +1,4 @@
 use core::{
-    alloc::Layout,
     any::Any,
     borrow::Borrow,
     error::Error,
@@ -15,7 +14,7 @@ use crate::{
     Gc,
     collect::{Collect, Trace},
     context::Mutation,
-    types::{GcBox, GcBoxHeader, GcBoxInner, Invariant, MetaLayout},
+    types::{GcBox, Invariant, MetaLayout},
     vec::Vec,
 };
 
@@ -546,16 +545,9 @@ impl<'gc, T: ?Sized + 'gc> Unique<'gc, T> {
     /// [`Gc::as_ptr`]. There must also exist no other garbage collected pointers
     /// which point to the same allocation. This is always the case for [`Unique::as_ptr`].
     pub unsafe fn from_raw(raw: *mut T) -> Unique<'gc, T> {
-        let layout = Layout::new::<GcBoxHeader>();
-        // SAFETY: `ptr` is valid and aligned guaranteed by the caller.
-        let (_, header_offset) = layout
-            .extend(unsafe { Layout::for_value_raw(raw) })
-            .unwrap();
-        // SAFETY: `ptr` is previously obtained from `Gc::as_ptr`, so there is always a header.
-        let ptr = unsafe { raw.byte_sub(header_offset) } as *mut GcBoxInner<T>;
         Unique {
-            // SAFETY: `ptr` is valid and aligned guaranteed by the caller.
-            ptr: unsafe { GcBox::erase(NonNull::new_unchecked(ptr)) },
+            // SAFETY: `raw` is valid and aligned guaranteed by the caller.
+            ptr: unsafe { GcBox::erase(NonNull::new_unchecked(raw)) },
             _invariant: PhantomData,
         }
     }

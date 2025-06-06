@@ -1,5 +1,4 @@
 use core::{
-    alloc::Layout,
     any::Any,
     borrow::Borrow,
     convert::Infallible,
@@ -17,7 +16,7 @@ use crate::{
     barrier::{Unlock, Write},
     collect::{Collect, Static, Trace},
     context::Mutation,
-    types::{GcBox, GcBoxHeader, GcBoxInner, GcColor, Invariant, MetaLayout},
+    types::{GcBox, GcColor, Invariant, MetaLayout},
     vec::Vec,
 };
 
@@ -240,16 +239,9 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
     /// have been collected yet.
     #[inline]
     pub unsafe fn from_ptr(ptr: *const T) -> Gc<'gc, T> {
-        let layout = Layout::new::<GcBoxHeader>();
-        // SAFETY: `ptr` is valid and aligned guaranteed by the caller.
-        let (_, header_offset) = layout
-            .extend(unsafe { Layout::for_value_raw(ptr) })
-            .unwrap();
-        // SAFETY: `ptr` is previously obtained from `Gc::as_ptr`, so there is always a header.
-        let ptr = unsafe { (ptr as *mut T).byte_sub(header_offset) } as *mut GcBoxInner<T>;
         Gc {
             // SAFETY: `ptr` is valid and aligned guaranteed by the caller.
-            ptr: unsafe { GcBox::erase(NonNull::new_unchecked(ptr)) },
+            ptr: unsafe { GcBox::erase(NonNull::new_unchecked(ptr.cast_mut())) },
             _invariant: PhantomData,
         }
     }

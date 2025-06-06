@@ -457,12 +457,14 @@ impl Context {
                 ::alloc::alloc::handle_alloc_error(alloc_layout);
             };
 
-            mem.cast::<<U as Pointee>::Metadata>().write(metadata);
+            let ptr = mem.byte_add(offset - size_of::<GcBoxHeader>() - size_of::<<U as Pointee>::Metadata>());
+            ptr.cast::<<U as Pointee>::Metadata>().write(metadata);
 
-            let uninit = mem.byte_add(offset).cast::<GcBoxHeader>();
-            uninit.write(header);
+            let ptr = mem.byte_add(offset - size_of::<GcBoxHeader>());
+            ptr.cast::<GcBoxHeader>().write(header);
 
-            GcBox::from_raw(uninit.cast())
+            let ptr = mem.byte_add(offset);
+            GcBox::from_raw(ptr.cast())
         };
 
         self.all.set(Some(gc_box));
