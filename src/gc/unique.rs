@@ -11,11 +11,11 @@ use core::{
 };
 
 use crate::{
-    Gc,
+    Finalization, Gc,
     collect::{Collect, Trace},
     context::Mutation,
     ptr::{MetaCollect, Metadata, PtrMeta, PtrMetadata, Uninit},
-    types::{GcBox, Invariant},
+    types::{GcBox, GcColor, Invariant},
     vec::Vec,
 };
 
@@ -576,6 +576,25 @@ impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: Metadata<'a, T>> Unique<'gc, T, M> {
     pub fn into_gc(self) -> Gc<'gc, T, M> {
         // SAFETY: Trivial.
         unsafe { Gc::from_raw(Unique::into_raw_parts(self).0) }
+    }
+
+    /// Returns true when a pointer is *dead* during finalization. This is equivalent to
+    /// [`Gc::is_dead`].
+    ///
+    /// Any unique pointer reachable from the root will never be dead.
+    #[inline]
+    pub fn is_dead(_: &Finalization<'gc>, gc: &Self) -> bool {
+        matches!(gc.ptr.header().color(), GcColor::White | GcColor::WhiteWeak)
+    }
+
+    /// Manually marks a dead `Unique` GC pointer as reachable and keeps it alive.
+    ///
+    /// Equivalent to [`Gc::resurrect`]. Manually marks this pointer and all transitively
+    /// held pointers as reachable, thus keeping them from being dropped this collection
+    /// cycle.
+    #[inline]
+    pub fn resurrect(fc: &Finalization<'gc>, gc: &Self) {
+        fc.resurrect(gc.ptr);
     }
 }
 

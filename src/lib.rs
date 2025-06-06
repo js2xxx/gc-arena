@@ -7,7 +7,6 @@
 #![feature(ptr_metadata)]
 #![feature(trusted_len)]
 #![feature(unsize)]
-#![cfg_attr(miri, feature(maybe_uninit_as_bytes))]
 
 #[cfg(feature = "std")]
 extern crate std;
