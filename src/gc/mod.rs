@@ -16,7 +16,7 @@ use crate::{
     barrier::{Unlock, Write},
     collect::{Collect, Static, Trace},
     context::Mutation,
-    ptr::{MetaCollect, Metadata, PtrMeta, PtrMetadata},
+    ptr::{MetaCollect, Metadata, PtrMeta, PtrMetadata, Uninit},
     types::{GcBox, GcColor, Invariant},
     vec::Vec,
 };
@@ -111,6 +111,17 @@ where
     #[inline]
     fn borrow(&self) -> &T {
         self
+    }
+}
+
+impl<'gc, T: 'gc + Uninit, M: 'gc> Gc<'gc, T, M> {
+    /// Creates a new uninitialized unique `Gc` with its associated metadata.
+    pub fn with_metadata<'a, const ZEROED: bool>(mc: &Mutation<'gc>, meta: M) -> Unique<'gc, T, M>
+    where
+        T: 'a,
+        M: MetaCollect<'gc, 'a, T>,
+    {
+        Unique::with_metadata::<ZEROED>(mc, meta)
     }
 }
 

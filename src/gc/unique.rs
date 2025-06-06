@@ -14,7 +14,7 @@ use crate::{
     Gc,
     collect::{Collect, Trace},
     context::Mutation,
-    ptr::{MetaCollect, Metadata, PtrMeta, PtrMetadata},
+    ptr::{MetaCollect, Metadata, PtrMeta, PtrMetadata, Uninit},
     types::{GcBox, Invariant},
     vec::Vec,
 };
@@ -128,6 +128,93 @@ where
     }
 }
 
+impl<'gc, T: ?Sized + Uninit + 'gc, M: 'gc> Unique<'gc, T, M> {
+    /// Creates a new uninitialized `Unique` with its associated metadata.
+    pub fn with_metadata<'a, const ZEROED: bool>(mc: &Mutation<'gc>, meta: M) -> Unique<'gc, T, M>
+    where
+        T: 'a,
+        M: MetaCollect<'gc, 'a, T>,
+    {
+        let ptr = mc.allocate::<T, M, ZEROED>(meta);
+        let ret: Unique<'_, T, M> = Unique {
+            ptr,
+            _invariant: PhantomData,
+        };
+        #[cfg(not(miri))]
+        return ret;
+        #[cfg(miri)]
+        {
+            let mut ret = ret;
+            let addr = M::addr(Unique::as_raw_mut(&mut ret));
+            // SAFETY: The metadata is valid for this type.
+            let size = unsafe { ret.ptr.metadata::<M>().layout().unwrap_unchecked().size() };
+            // SAFETY: The memory is uninitialized and valid.
+            unsafe { core::ptr::write_bytes::<u8>(addr.as_ptr().cast(), 0, size) };
+            ret
+        }
+    }
+
+    /// Converts to `Unique<'gc, T::Init, M>`, assuming its contents are initialized.
+    ///
+    /// # Safety
+    ///
+    /// As with [`MaybeUninit::assume_init`], it is up to the caller to guarantee
+    /// that the value really is in an initialized state. Calling this when the
+    /// content is not yet fully initialized will likely cause undefined behaviour.
+    ///
+    /// # Examples
+    ///
+    /// For sized types:
+    ///
+    /// ```
+    /// # use gc_arena::{arena::rootless_mutate, gc::Unique};
+    /// # rootless_mutate(|mc| {
+    /// let mut gc = Unique::<i32>::new_uninit(mc);
+    ///
+    /// let gc: Unique<'_, i32> = unsafe {
+    ///     gc.as_mut_ptr().write(42);
+    ///
+    ///     gc.assume_init()
+    /// };
+    ///
+    /// assert_eq!(*gc, 42);
+    /// # });
+    /// ```
+    ///
+    /// For slices:
+    ///
+    /// ```
+    /// # use gc_arena::{arena::rootless_mutate, gc::Unique};
+    /// # rootless_mutate(|mc| {
+    /// let mut values = Unique::<[i32]>::new_uninit_slice(mc, 3);
+    ///
+    /// let values = unsafe {
+    ///     // Deferred initialization:
+    ///     values[0].as_mut_ptr().write(1);
+    ///     values[1].as_mut_ptr().write(2);
+    ///     values[2].as_mut_ptr().write(3);
+    ///
+    ///     values.assume_init()
+    /// };
+    ///
+    /// assert_eq!(*values, [1, 2, 3]);
+    /// # });
+    /// ```
+    pub unsafe fn assume_init<'a>(self) -> Unique<'gc, T::Init, M>
+    where
+        T::Init: 'a,
+        M: MetaCollect<'gc, 'a, T::Init>,
+    {
+        unsafe { self.ptr.header().reset_vtable::<T::Init, M>() };
+        let needs_trace = unsafe { self.ptr.metadata::<M>().needs_trace() };
+        self.ptr.header().set_needs_trace(needs_trace);
+        Unique {
+            ptr: self.ptr,
+            _invariant: PhantomData,
+        }
+    }
+}
+
 impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, T> {
     /// Creates a new `Unique` containing the given value.
     ///
@@ -201,10 +288,7 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, T> {
     /// ```
     #[inline]
     pub fn new_uninit(mc: &Mutation<'gc>) -> Unique<'gc, MaybeUninit<T>> {
-        Unique {
-            ptr: mc.allocate::<MaybeUninit<T>, (), false>(()),
-            _invariant: PhantomData,
-        }
+        Unique::with_metadata::<false>(mc, ())
     }
 
     /// Creates a new `Unique` with uninitialized contents, with the memory being filled with `0` bytes.
@@ -223,21 +307,7 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, T> {
     /// ```
     #[inline]
     pub fn new_zeroed(mc: &Mutation<'gc>) -> Unique<'gc, MaybeUninit<T>> {
-        let ret = Unique {
-            ptr: mc.allocate::<MaybeUninit<T>, (), true>(()),
-            _invariant: PhantomData,
-        };
-        #[cfg(not(miri))]
-        return ret;
-        #[cfg(miri)]
-        {
-            // Miri doesn't support zeroing, so we need to do it manually.
-            let mut ret = ret;
-            core::slice::from_mut(&mut *ret)
-                .as_bytes_mut()
-                .fill(MaybeUninit::new(0));
-            return ret;
-        }
+        Unique::with_metadata::<true>(mc, ())
     }
 }
 
@@ -263,10 +333,7 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, [T]> {
     /// # });
     /// ```
     pub fn new_uninit_slice(mc: &Mutation<'gc>, len: usize) -> Unique<'gc, [MaybeUninit<T>]> {
-        Unique {
-            ptr: mc.allocate::<[MaybeUninit<T>], usize, false>(len),
-            _invariant: PhantomData,
-        }
+        Unique::with_metadata::<false>(mc, len)
     }
 
     /// Constructs a new garbage-collected slice with unitialized contents, with the memory being filled with `0` bytes.
@@ -282,19 +349,7 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, [T]> {
     /// # });
     /// ```
     pub fn new_zeroed_slice(mc: &Mutation<'gc>, len: usize) -> Unique<'gc, [MaybeUninit<T>]> {
-        let ret: Unique<'gc, [MaybeUninit<T>]> = Unique {
-            ptr: mc.allocate::<[MaybeUninit<T>], usize, true>(len),
-            _invariant: PhantomData,
-        };
-        #[cfg(not(miri))]
-        return ret;
-        #[cfg(miri)]
-        {
-            // Miri doesn't support zeroing, so we need to do it manually.
-            let mut ret = ret;
-            ret.as_bytes_mut().fill(MaybeUninit::new(0));
-            return ret;
-        }
+        Unique::with_metadata::<true>(mc, len)
     }
 
     /// Transforms an iterator into a `Unique<'gc, [T]>`.
@@ -307,40 +362,6 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, [T]> {
 }
 
 impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, MaybeUninit<T>> {
-    /// Converts to `Unique<'gc, T>`.
-    ///
-    /// # Safety
-    ///
-    /// As with [`MaybeUninit::assume_init`], it is up to the caller to guarantee
-    /// that the value really is in an initialized state. Calling this when the
-    /// content is not yet fully initialized will likely cause undefined behaviour.
-    ///
-    /// # Examples
-    /// ```
-    /// # use gc_arena::{arena::rootless_mutate, gc::Unique};
-    /// # rootless_mutate(|mc| {
-    /// let mut gc = Unique::<i32>::new_uninit(mc);
-    ///
-    /// let gc: Unique<'_, i32> = unsafe {
-    ///     gc.as_mut_ptr().write(42);
-    ///
-    ///     gc.assume_init()
-    /// };
-    ///
-    /// assert_eq!(*gc, 42);
-    /// # });
-    /// ```
-    #[inline]
-    pub unsafe fn assume_init(self) -> Unique<'gc, T> {
-        // SAFETY: The caller guarantees that the value is initialized.
-        unsafe { self.ptr.header().reset_vtable::<T, ()>() };
-        self.ptr.header().set_needs_trace(T::NEEDS_TRACE);
-        Unique {
-            ptr: self.ptr,
-            _invariant: PhantomData,
-        }
-    }
-
     /// Writes the value and converts to `Unique<'gc, T>`
     ///
     /// This method converts the pointer similarly to [`Unique::assume_init`]
@@ -348,48 +369,11 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, MaybeUninit<T>> {
     pub fn write(mut this: Self, value: T) -> Unique<'gc, T> {
         (*this).write(value);
         // SAFETY: The value is initialized by `value`.
-        unsafe { Self::assume_init(this) }
+        unsafe { this.assume_init() }
     }
 }
 
 impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, [MaybeUninit<T>]> {
-    /// Converts to `Unique<'gc, [T]>`.
-    ///
-    /// # Safety
-    /// As with [`MaybeUninit::assume_init`], it is up to the caller to
-    /// guarantee that the values really are in an initialized state. Calling
-    /// this when the contents are not yet fully initialized will likely cause
-    /// undefined behaviour.
-    ///
-    /// # Examples
-    /// ```
-    /// # use gc_arena::{arena::rootless_mutate, gc::Unique};
-    /// # rootless_mutate(|mc| {
-    /// let mut values = Unique::<[i32]>::new_uninit_slice(mc, 3);
-    ///
-    /// let values = unsafe {
-    ///     // Deferred initialization:
-    ///     values[0].as_mut_ptr().write(1);
-    ///     values[1].as_mut_ptr().write(2);
-    ///     values[2].as_mut_ptr().write(3);
-    ///
-    ///     values.assume_init()
-    /// };
-    ///
-    /// assert_eq!(*values, [1, 2, 3]);
-    /// # });
-    /// ```
-    #[inline]
-    pub unsafe fn assume_init(self) -> Unique<'gc, [T]> {
-        // SAFETY: The caller guarantees that the slice is initialized.
-        unsafe { self.ptr.header().reset_vtable::<[T], usize>() };
-        self.ptr.header().set_needs_trace(<[T]>::NEEDS_TRACE);
-        Unique {
-            ptr: self.ptr,
-            _invariant: PhantomData,
-        }
-    }
-
     /// Constructs a new garbage-collected slice, cloning each element from the given slice.
     ///
     /// # Examples

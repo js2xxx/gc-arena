@@ -1,11 +1,32 @@
 use core::{
     alloc::{Layout, LayoutError},
-    ptr::{DynMetadata, NonNull, Pointee},
+    mem::MaybeUninit,
+    ptr::{self, DynMetadata, NonNull, Pointee},
 };
 
 use crate::{Collect, collect::Trace};
 
 pub(crate) type PtrMeta<T> = <T as Pointee>::Metadata;
+
+/// A type that is valid when uninitalized.
+///
+/// This trait is implemented for all sized objects and slices.
+///
+/// # Safety
+///
+/// The type must be valid when any part of its data is uninitialized.
+pub unsafe trait Uninit {
+    /// The initialized form of the type.
+    type Init: ?Sized;
+}
+
+unsafe impl<T> Uninit for MaybeUninit<T> {
+    type Init = T;
+}
+
+unsafe impl<T> Uninit for [MaybeUninit<T>] {
+    type Init = [T];
+}
 
 /// A generalized pointer metadata type.
 ///
@@ -312,11 +333,88 @@ where
     Dyn: ?Sized,
 {
     fn layout(self) -> Result<Layout, LayoutError> {
-        let ptr: NonNull<U> = NonNull::from_raw_parts(NonNull::<()>::dangling(), self);
-        Ok(unsafe { Layout::for_value_raw(ptr.as_ptr()) })
+        let ptr: *const U = ptr::from_raw_parts(ptr::null::<()>(), self);
+        // SAFETY: The metadata part of the pointer is valid.
+        Ok(unsafe { Layout::for_value_raw(ptr) })
     }
 
     unsafe fn drop_in_place(to_drop: Self::Ptr) {
         unsafe { to_drop.drop_in_place() };
+    }
+}
+
+// Implementation for custom-layout bytes.
+
+unsafe impl<'a> Metadata<'a, [u8]> for Layout {
+    fn with_addr(self, addr: NonNull<()>) -> Self::Ptr {
+        NonNull::from_raw_parts(addr, self.size())
+    }
+
+    fn addr(ptr: Self::Ptr) -> NonNull<()> {
+        ptr.cast()
+    }
+
+    unsafe fn as_ref(ptr: Self::Ptr) -> Self::Ref {
+        unsafe { ptr.as_ref() }
+    }
+}
+
+unsafe impl<'a> MetaLayout<'a, [u8]> for Layout {
+    fn layout(self) -> Result<Layout, LayoutError> {
+        Ok(self)
+    }
+
+    unsafe fn drop_in_place(_: Self::Ptr) {
+        // Bytes are just arrays of bytes, which doesn't need drop.
+    }
+}
+
+unsafe impl<'gc, 'a> MetaCollect<'gc, 'a, [u8]> for Layout {
+    #[inline]
+    fn needs_trace(self) -> bool {
+        const _: () = assert!(!<[u8]>::NEEDS_TRACE);
+        false
+    }
+
+    #[inline]
+    fn trace<C: Trace<'gc>>(_: &'a [u8], _: &mut C) {
+        // Bytes are just arrays of bytes, which doesn't need trace.
+    }
+}
+
+unsafe impl<'a> Metadata<'a, [MaybeUninit<u8>]> for Layout {
+    fn with_addr(self, addr: NonNull<()>) -> Self::Ptr {
+        NonNull::from_raw_parts(addr, self.size())
+    }
+
+    fn addr(ptr: Self::Ptr) -> NonNull<()> {
+        ptr.cast()
+    }
+
+    unsafe fn as_ref(ptr: Self::Ptr) -> Self::Ref {
+        unsafe { ptr.as_ref() }
+    }
+}
+
+unsafe impl<'a> MetaLayout<'a, [MaybeUninit<u8>]> for Layout {
+    fn layout(self) -> Result<Layout, LayoutError> {
+        Ok(self)
+    }
+
+    unsafe fn drop_in_place(_: Self::Ptr) {
+        // Bytes are just arrays of bytes, which doesn't need drop.
+    }
+}
+
+unsafe impl<'gc, 'a> MetaCollect<'gc, 'a, [MaybeUninit<u8>]> for Layout {
+    #[inline]
+    fn needs_trace(self) -> bool {
+        const _: () = assert!(!<[MaybeUninit<u8>]>::NEEDS_TRACE);
+        false
+    }
+
+    #[inline]
+    fn trace<C: Trace<'gc>>(_: &'a [MaybeUninit<u8>], _: &mut C) {
+        // Bytes are just arrays of bytes, which doesn't need trace.
     }
 }
