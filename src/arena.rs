@@ -209,7 +209,7 @@ where
             // but is not yet stable. Casting the `&Mutation` is completely invisible
             // to the callback `f` (since it needs to handle an arbitrary lifetime),
             // and lets us stay compatible with older versions of Rust
-            let mc: Mutation<'_> = context.mutation_context(Box::allocator(&context) as _);
+            let mc: Mutation<'_> = Mutation::new(&context, Box::allocator(&context) as _);
             let root: Root<'static, R> = f(&mc);
             Arena { context, root }
         }
@@ -222,7 +222,7 @@ where
     {
         unsafe {
             let context = BoxContext(Box::new_in(Context::new(), alloc));
-            let mc: Mutation<'_> = context.mutation_context(Box::allocator(&context) as _);
+            let mc: Mutation<'_> = Mutation::new(&context, Box::allocator(&context) as _);
             let root: Root<'static, R> = f(&mc)?;
             Ok(Arena { context, root })
         }
@@ -239,9 +239,7 @@ where
     {
         self.context.root_barrier();
         let new_root: Root<'static, R2> = unsafe {
-            let mc: Mutation<'_> = self
-                .context
-                .mutation_context(Box::allocator(&self.context) as _);
+            let mc: Mutation<'_> = Mutation::new(&self.context, Box::allocator(&self.context) as _);
             f(&mc, self.root)
         };
         Arena {
@@ -261,9 +259,7 @@ where
     {
         self.context.root_barrier();
         let new_root: Root<'static, R2> = unsafe {
-            let mc: Mutation<'_> = self
-                .context
-                .mutation_context(Box::allocator(&self.context) as _);
+            let mc: Mutation<'_> = Mutation::new(&self.context, Box::allocator(&self.context) as _);
             f(&mc, self.root)?
         };
         Ok(Arena {
@@ -288,9 +284,7 @@ where
         F: for<'gc> FnOnce(&Mutation<'gc>, &Root<'gc, R>) -> T,
     {
         unsafe {
-            let mc: Mutation<'_> = self
-                .context
-                .mutation_context(Box::allocator(&self.context) as _);
+            let mc: Mutation<'_> = Mutation::new(&self.context, Box::allocator(&self.context) as _);
             let root: &'static Root<'_, R> = &*(&self.root as *const _);
             f(&mc, root)
         }
@@ -305,9 +299,7 @@ where
     {
         self.context.root_barrier();
         unsafe {
-            let mc: Mutation<'_> = self
-                .context
-                .mutation_context(Box::allocator(&self.context) as _);
+            let mc: Mutation<'_> = Mutation::new(&self.context, Box::allocator(&self.context) as _);
             let root: &'static mut Root<'_, R> = &mut *(&mut self.root as *mut _);
             f(&mc, root)
         }
@@ -473,10 +465,8 @@ where
         F: for<'gc> FnOnce(&Finalization<'gc>, &Root<'gc, R>) -> T,
     {
         unsafe {
-            let mc: Finalization<'_> = self
-                .0
-                .context
-                .finalization_context(Box::allocator(&self.0.context) as _);
+            let mc: Finalization<'_> =
+                Finalization::new(&self.0.context, Box::allocator(&self.0.context) as _);
             let root: &'static Root<'_, R> = &*(&self.0.root as *const _);
             f(&mc, root)
         }
@@ -518,6 +508,6 @@ where
 
     unsafe {
         let context = DropGuard(Context::new());
-        f(&context.0.mutation_context(&Global))
+        f(&Mutation::new(&context.0, &Global))
     }
 }
