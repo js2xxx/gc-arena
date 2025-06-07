@@ -1131,6 +1131,50 @@ fn cycle_debt_stops() {
 }
 
 #[test]
+fn arena_move() {
+    #[derive(Collect)]
+    struct TestRoot<'gc> {
+        test: gc_arena::vec::Vec<'gc, Gc<'gc, [u8]>>,
+    }
+
+    #[inline(never)]
+    fn push<const SIZE: usize>(
+        mut arena: Arena<Rootable![TestRoot<'_>]>,
+    ) -> Arena<Rootable![TestRoot<'_>]> {
+        arena.mutate_root(|mc, root| root.test.push(mc, Gc::new_unsize(mc, [0; SIZE])));
+        arena
+    }
+
+    #[inline(never)]
+    fn pop(mut arena: Arena<Rootable![TestRoot<'_>]>) -> Arena<Rootable![TestRoot<'_>]> {
+        arena.mutate_root(|_, root| root.test.pop().map(drop));
+        arena
+    }
+
+    #[inline(never)]
+    fn drop_(arena: Arena<Rootable![TestRoot<'_>]>) {
+        drop(arena);
+    }
+
+    let mut arena = Arena::<Rootable![TestRoot<'_>]>::new(|mc| {
+        let test = gc_arena::vec::Vec::new(mc);
+        TestRoot { test }
+    });
+
+    arena = push::<1024>(arena);
+    arena = push::<512>(arena);
+    arena = pop(arena);
+    arena.finish_cycle();
+
+    arena = push::<256>(arena);
+    arena = push::<128>(arena);
+    arena = pop(arena);
+    arena.finish_cycle();
+
+    drop_(arena);
+}
+
+#[test]
 #[cfg(not(miri))]
 fn ui() {
     let t = trybuild::TestCases::new();

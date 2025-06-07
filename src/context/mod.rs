@@ -17,20 +17,6 @@ use crate::{
 mod adapter;
 pub use self::adapter::{Finalization, Mutation};
 
-impl<'gc> Trace<'gc> for Context {
-    fn trace_gc<T: ?Sized + 'gc, M: 'gc>(&mut self, gc: Gc<'gc, T, M>) {
-        Context::trace(self, gc.ptr)
-    }
-
-    fn trace_weak<T: ?Sized + 'gc, M: 'gc>(&mut self, gc: Weak<'gc, T, M>) {
-        Context::trace_weak(self, gc.inner.ptr)
-    }
-
-    fn trace_unique<T: ?Sized + 'gc, M: 'gc>(&mut self, gc: &Unique<'gc, T, M>) {
-        Context::trace(self, gc.ptr);
-    }
-}
-
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub(crate) enum Phase {
     Mark,
@@ -95,11 +81,25 @@ pub(crate) struct Context {
     gray_again: Cell<Option<GcBox>>,
 }
 
-impl Context {
-    pub(crate) unsafe fn drop(&mut self, a: &impl Allocator) {
-        struct DropAll<'a, A: Allocator>(&'a Metrics, Option<GcBox>, &'a A);
+impl<'gc> Trace<'gc> for Context {
+    fn trace_gc<T: ?Sized + 'gc, M: 'gc>(&mut self, gc: Gc<'gc, T, M>) {
+        Context::trace(self, gc.ptr)
+    }
 
-        impl<'a, A: Allocator> Drop for DropAll<'a, A> {
+    fn trace_weak<T: ?Sized + 'gc, M: 'gc>(&mut self, gc: Weak<'gc, T, M>) {
+        Context::trace_weak(self, gc.inner.ptr)
+    }
+
+    fn trace_unique<T: ?Sized + 'gc, M: 'gc>(&mut self, gc: &Unique<'gc, T, M>) {
+        Context::trace(self, gc.ptr);
+    }
+}
+
+impl Context {
+    pub(crate) unsafe fn drop(&mut self, a: &(impl Allocator + ?Sized)) {
+        struct DropAll<'a, A: Allocator + ?Sized>(&'a Metrics, Option<GcBox>, &'a A);
+
+        impl<'a, A: Allocator + ?Sized> Drop for DropAll<'a, A> {
             fn drop(&mut self) {
                 if let Some(gc_box) = self.1.take() {
                     let mut drop_resume = DropAll(self.0, Some(gc_box), self.2);

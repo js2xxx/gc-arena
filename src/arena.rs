@@ -1,4 +1,4 @@
-use alloc::{alloc::Global, boxed::Box};
+use alloc::alloc::Global;
 use core::{
     alloc::Allocator,
     marker::PhantomData,
@@ -105,28 +105,34 @@ pub enum CollectionPhase {
     Sweeping,
 }
 
-#[repr(transparent)]
-struct BoxContext<A: Allocator>(Box<Context, A>);
+struct ContextAdapter<A: Allocator>(Context, A);
 
-impl<A: Allocator> Deref for BoxContext<A> {
-    type Target = Box<Context, A>;
+impl<'a, A: Allocator + 'a> ContextAdapter<A> {
+    #[inline]
+    fn allocator(&self) -> &(dyn Allocator + 'a) {
+        &self.1 as _
+    }
+}
+
+impl<A: Allocator> Deref for ContextAdapter<A> {
+    type Target = Context;
 
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-impl<A: Allocator> DerefMut for BoxContext<A> {
+impl<A: Allocator> DerefMut for ContextAdapter<A> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
 }
 
-impl<A: Allocator> Drop for BoxContext<A> {
+impl<A: Allocator> Drop for ContextAdapter<A> {
     fn drop(&mut self) {
         unsafe {
-            let alloc = core::ptr::from_ref(Box::allocator(&self.0) as _);
-            (*self.0).drop(&*alloc);
+            let alloc = core::ptr::from_ref(self.allocator());
+            self.0.drop(&*alloc);
         }
     }
 }
@@ -158,7 +164,7 @@ pub struct Arena<R, A: Allocator = Global>
 where
     R: for<'a> Rootable<'a>,
 {
-    context: BoxContext<A>,
+    context: ContextAdapter<A>,
     root: Root<'static, R>,
 }
 
@@ -201,7 +207,7 @@ where
         F: for<'gc> FnOnce(&Mutation<'gc>) -> Root<'gc, R>,
     {
         unsafe {
-            let context = BoxContext(Box::new_in(Context::new(), alloc));
+            let context = ContextAdapter(Context::new(), alloc);
             // Note - we cast the `&Mutation` to a `'static` lifetime here,
             // instead of transmuting the root type returned by `f`. Transmuting the root
             // type is allowed in nightly versions of rust
@@ -209,7 +215,7 @@ where
             // but is not yet stable. Casting the `&Mutation` is completely invisible
             // to the callback `f` (since it needs to handle an arbitrary lifetime),
             // and lets us stay compatible with older versions of Rust
-            let mc: Mutation<'_> = Mutation::new(&context, Box::allocator(&context) as _);
+            let mc: Mutation<'_> = Mutation::new(&context, context.allocator());
             let root: Root<'static, R> = f(&mc);
             Arena { context, root }
         }
@@ -221,8 +227,8 @@ where
         F: for<'gc> FnOnce(&Mutation<'gc>) -> Result<Root<'gc, R>, E>,
     {
         unsafe {
-            let context = BoxContext(Box::new_in(Context::new(), alloc));
-            let mc: Mutation<'_> = Mutation::new(&context, Box::allocator(&context) as _);
+            let context = ContextAdapter(Context::new(), alloc);
+            let mc: Mutation<'_> = Mutation::new(&context, context.allocator());
             let root: Root<'static, R> = f(&mc)?;
             Ok(Arena { context, root })
         }
@@ -239,7 +245,7 @@ where
     {
         self.context.root_barrier();
         let new_root: Root<'static, R2> = unsafe {
-            let mc: Mutation<'_> = Mutation::new(&self.context, Box::allocator(&self.context) as _);
+            let mc: Mutation<'_> = Mutation::new(&self.context, self.context.allocator());
             f(&mc, self.root)
         };
         Arena {
@@ -259,7 +265,7 @@ where
     {
         self.context.root_barrier();
         let new_root: Root<'static, R2> = unsafe {
-            let mc: Mutation<'_> = Mutation::new(&self.context, Box::allocator(&self.context) as _);
+            let mc: Mutation<'_> = Mutation::new(&self.context, self.context.allocator());
             f(&mc, self.root)?
         };
         Ok(Arena {
@@ -284,7 +290,7 @@ where
         F: for<'gc> FnOnce(&Mutation<'gc>, &Root<'gc, R>) -> T,
     {
         unsafe {
-            let mc: Mutation<'_> = Mutation::new(&self.context, Box::allocator(&self.context) as _);
+            let mc: Mutation<'_> = Mutation::new(&self.context, self.context.allocator());
             let root: &'static Root<'_, R> = &*(&self.root as *const _);
             f(&mc, root)
         }
@@ -299,7 +305,7 @@ where
     {
         self.context.root_barrier();
         unsafe {
-            let mc: Mutation<'_> = Mutation::new(&self.context, Box::allocator(&self.context) as _);
+            let mc: Mutation<'_> = Mutation::new(&self.context, self.context.allocator());
             let root: &'static mut Root<'_, R> = &mut *(&mut self.root as *mut _);
             f(&mc, root)
         }
@@ -348,7 +354,7 @@ where
     #[inline]
     pub fn collect_debt(&mut self) {
         unsafe {
-            let alloc = core::ptr::from_ref(Box::allocator(&self.context) as _);
+            let alloc = core::ptr::from_ref(self.context.allocator());
             self.context
                 .do_collection(&self.root, RunUntil::PayDebt, Stop::Full, &*alloc);
         }
@@ -369,7 +375,7 @@ where
     #[inline]
     pub fn mark_debt(&mut self) -> Option<MarkedArena<'_, R, A>> {
         unsafe {
-            let alloc = core::ptr::from_ref(Box::allocator(&self.context) as _);
+            let alloc = core::ptr::from_ref(self.context.allocator());
             self.context
                 .do_collection(&self.root, RunUntil::PayDebt, Stop::FullyMarked, &*alloc);
         }
@@ -395,7 +401,7 @@ where
     #[inline]
     pub fn finish_marking(&mut self) -> Option<MarkedArena<'_, R, A>> {
         unsafe {
-            let alloc = core::ptr::from_ref(Box::allocator(&self.context) as _);
+            let alloc = core::ptr::from_ref(self.context.allocator());
             self.context
                 .do_collection(&self.root, RunUntil::Stop, Stop::FullyMarked, &*alloc);
         }
@@ -422,7 +428,7 @@ where
     #[inline]
     pub fn cycle_debt(&mut self) {
         unsafe {
-            let alloc = core::ptr::from_ref(Box::allocator(&self.context) as _);
+            let alloc = core::ptr::from_ref(self.context.allocator());
 
             self.context
                 .do_collection(&self.root, RunUntil::PayDebt, Stop::FinishCycle, &*alloc);
@@ -437,7 +443,7 @@ where
     #[inline]
     pub fn finish_cycle(&mut self) {
         unsafe {
-            let alloc = core::ptr::from_ref(Box::allocator(&self.context) as _);
+            let alloc = core::ptr::from_ref(self.context.allocator());
             self.context
                 .do_collection(&self.root, RunUntil::Stop, Stop::FinishCycle, &*alloc);
         }
@@ -466,7 +472,7 @@ where
     {
         unsafe {
             let mc: Finalization<'_> =
-                Finalization::new(&self.0.context, Box::allocator(&self.0.context) as _);
+                Finalization::new(&self.0.context, &self.0.context.allocator());
             let root: &'static Root<'_, R> = &*(&self.0.root as *const _);
             f(&mc, root)
         }
@@ -477,7 +483,7 @@ where
     #[inline]
     pub fn start_sweeping(self) {
         unsafe {
-            let alloc = core::ptr::from_ref(Box::allocator(&self.0.context) as _);
+            let alloc = core::ptr::from_ref(self.0.context.allocator());
             self.0
                 .context
                 .do_collection(&self.0.root, RunUntil::Stop, Stop::AtSweep, &*alloc);
@@ -498,16 +504,8 @@ pub fn rootless_mutate<F, R>(f: F) -> R
 where
     F: for<'gc> FnOnce(&Mutation<'gc>) -> R,
 {
-    struct DropGuard(Context);
-
-    impl Drop for DropGuard {
-        fn drop(&mut self) {
-            unsafe { self.0.drop(&Global) }
-        }
-    }
-
     unsafe {
-        let context = DropGuard(Context::new());
+        let context = ContextAdapter(Context::new(), Global);
         f(&Mutation::new(&context.0, &Global))
     }
 }
