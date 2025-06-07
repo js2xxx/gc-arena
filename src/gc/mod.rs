@@ -29,18 +29,20 @@ pub use self::{unique::Unique, weak::Weak};
 
 /// A garbage collected pointer to a type T.
 ///
-/// Implements Copy, and is implemented as a plain machine pointer. You can only allocate `Gc`
-/// pointers through a [`&Mutation<'gc>`] inside an arena type, and through "generativity" such
-/// `Gc` pointers may not escape the arena they were born in or be stored inside TLS. This,
-/// combined with correct `Collect` implementations, means that `Gc` pointers will never be
-/// dangling and are always safe to access.
+/// Implements Copy, and is implemented as a plain machine pointer. You can only
+/// allocate `Gc` pointers through a [`&Mutation<'gc>`] inside an arena type,
+/// and through "generativity" such `Gc` pointers may not escape the arena they
+/// were born in or be stored inside TLS. This, combined with correct `Collect`
+/// implementations, means that `Gc` pointers will never be dangling and are
+/// always safe to access.
 ///
 /// # Layout
 ///
-/// The underlying pointer points directly to the value, so it can be safety [transmute]d when
-/// the type is [`Sized`]. However, since it is a **thin** pointer, it cannot be safely cast to
-/// the corresponding raw pointer when the type is `?Sized`. To obtain a raw pointer, use the
-/// [`Gc::as_ptr`] method, or [`Gc::to_raw_parts`] if the metadata is customed.
+/// The underlying pointer points directly to the value, so it can be safety
+/// [transmute]d when the type is [`Sized`]. However, since it is a **thin**
+/// pointer, it cannot be safely cast to the corresponding raw pointer when the
+/// type is `?Sized`. To obtain a raw pointer, use the [`Gc::as_ptr`] method, or
+/// [`Gc::to_raw_parts`] if the metadata is customed.
 ///
 /// [transmute]: core::mem::transmute
 /// [`&Mutation<'gc>`]: crate::context::Mutation
@@ -191,8 +193,9 @@ impl<'gc, T: Collect<'gc> + 'gc> Gc<'gc, T> {
 
     /// Transforms an iterator into a `Gc<'gc, [T]>`.
     ///
-    /// The signature of this function differs from [`Iterator::collect`] from the
-    /// standard library since a [`Mutation`] is required to handle the allocation.
+    /// The signature of this function differs from [`Iterator::collect`] from
+    /// the standard library since a [`Mutation`] is required to handle the
+    /// allocation.
     pub fn collect<I: IntoIterator<Item = T>>(mc: &Mutation<'gc>, iter: I) -> Gc<'gc, [T]> {
         Unique::collect(mc, iter).into_gc()
     }
@@ -201,9 +204,9 @@ impl<'gc, T: Collect<'gc> + 'gc> Gc<'gc, T> {
 impl<'gc, T: 'static> Gc<'gc, T> {
     /// Create a new `Gc` pointer from a static value.
     ///
-    /// This method does not require that the type `T` implement `Collect`. This uses [`Static`]
-    /// internally to automatically provide a trivial `Collect` impl and is equivalent to the
-    /// following code:
+    /// This method does not require that the type `T` implement `Collect`. This
+    /// uses [`Static`] internally to automatically provide a trivial
+    /// `Collect` impl and is equivalent to the following code:
     ///
     /// ```rust
     /// # use gc_arena::{Gc, collect::Static};
@@ -273,7 +276,8 @@ impl<'gc, T: ?Sized + 'gc, M: 'gc> Gc<'gc, T, M> {
     ///
     /// # Safety
     ///
-    /// It must be valid to dereference a `N<U>::Ptr` that has come from casting a `M<T>::Ptr`.
+    /// It must be valid to dereference a `N<U>::Ptr` that has come from casting
+    /// a `M<T>::Ptr`.
     #[inline]
     pub unsafe fn cast<U: 'gc, N: 'gc>(this: Gc<'gc, T, M>) -> Gc<'gc, U, N> {
         Gc {
@@ -286,13 +290,14 @@ impl<'gc, T: ?Sized + 'gc, M: 'gc> Gc<'gc, T, M> {
 impl<'gc, T: 'gc + ?Sized, M: Metadata<'gc, T>> Gc<'gc, T, M> {
     /// Obtains a long-lived reference to the contents of this `Gc`.
     ///
-    /// Unlike `AsRef` or `Deref`, the returned reference isn't bound to the `Gc` itself, and
-    /// will stay valid for the entirety of the current arena callback.
+    /// Unlike `AsRef` or `Deref`, the returned reference isn't bound to the
+    /// `Gc` itself, and will stay valid for the entirety of the current
+    /// arena callback.
     #[inline]
     pub fn get_ref(this: Self) -> M::Ref {
-        // SAFETY: The returned reference cannot escape the current arena callback, as `&'gc T`
-        // never implements `Collect` (unless `'gc` is `'static`, which is impossible here), and
-        // so cannot be stored inside the GC root.
+        // SAFETY: The returned reference cannot escape the current arena callback, as
+        // `&'gc T` never implements `Collect` (unless `'gc` is `'static`, which is
+        // impossible here), and so cannot be stored inside the GC root.
         unsafe { M::as_ref(this.ptr.unerase::<T, M>()) }
     }
 }
@@ -300,12 +305,14 @@ impl<'gc, T: 'gc + ?Sized, M: Metadata<'gc, T>> Gc<'gc, T, M> {
 impl<'gc, T: 'gc + ?Sized, M: PtrMetadata<'gc, T>> Gc<'gc, T, M> {
     /// Triggers a write barrier on this `Gc`, allowing for safe mutation.
     ///
-    /// This triggers an unrestricted *backwards* write barrier on this pointer, meaning that it is
-    /// guaranteed that this pointer can safely adopt *any* arbitrary child pointers (until the next
-    /// time that collection is triggered).
+    /// This triggers an unrestricted *backwards* write barrier on this pointer,
+    /// meaning that it is guaranteed that this pointer can safely adopt
+    /// *any* arbitrary child pointers (until the next time that collection
+    /// is triggered).
     ///
-    /// It returns a reference to the inner `T` wrapped in a `Write` marker to allow for
-    /// unrestricted mutation on the held type or any of its directly held fields.
+    /// It returns a reference to the inner `T` wrapped in a `Write` marker to
+    /// allow for unrestricted mutation on the held type or any of its
+    /// directly held fields.
     #[inline]
     pub fn write(mc: &Mutation<'gc>, gc: Self) -> &'gc Write<T> {
         unsafe {
@@ -330,8 +337,8 @@ impl<'gc, T: 'gc + ?Sized, M: PtrMetadata<'gc, T>> Gc<'gc, T, M> {
 impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: PtrMetadata<'a, T>> Gc<'gc, T, M> {
     /// Returns a raw pointer to the `Gc`'s contents.
     ///
-    /// Very few guarantees are given about this pointer, except that it is properly
-    /// aligned, and points to a valid instance of `T`
+    /// Very few guarantees are given about this pointer, except that it is
+    /// properly aligned, and points to a valid instance of `T`
     pub fn as_ptr(this: Self) -> *const T {
         unsafe { this.ptr.unerase::<T, M>().as_ptr() }
     }
@@ -340,8 +347,8 @@ impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: PtrMetadata<'a, T>> Gc<'gc, T, M> {
     ///
     /// # Safety
     ///
-    /// The given pointer must have been obtained from [`Gc::as_ptr`] within the same
-    /// mutation session.
+    /// The given pointer must have been obtained from [`Gc::as_ptr`] within the
+    /// same mutation session.
     pub unsafe fn from_ptr(raw: *const T) -> Self {
         Gc {
             // SAFETY: `raw` is valid and aligned guaranteed by the caller.
@@ -352,8 +359,8 @@ impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: PtrMetadata<'a, T>> Gc<'gc, T, M> {
 }
 
 impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: Metadata<'a, T>> Gc<'gc, T, M> {
-    /// Obtains a [weaked] version of the `Gc` pointer. Useful for breaking reference cycles
-    /// and clarify ownership relations.
+    /// Obtains a [weaked] version of the `Gc` pointer. Useful for breaking
+    /// reference cycles and clarify ownership relations.
     ///
     /// [weaked]: Weak
     #[inline]
@@ -363,8 +370,8 @@ impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: Metadata<'a, T>> Gc<'gc, T, M> {
 
     /// Returns the raw pointer parts to the `Gc`'s contents.
     ///
-    /// Very few guarantees are given about this pointer, except that it is properly
-    /// aligned, and points to a valid instance of `T`
+    /// Very few guarantees are given about this pointer, except that it is
+    /// properly aligned, and points to a valid instance of `T`
     pub fn addr(this: Self) -> NonNull<()> {
         this.ptr.into_raw()
     }
@@ -378,8 +385,8 @@ impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: Metadata<'a, T>> Gc<'gc, T, M> {
 
     /// Returns the raw pointer parts to the `Gc`'s contents.
     ///
-    /// Very few guarantees are given about this pointer, except that it is properly
-    /// aligned, and points to a valid instance of `T`
+    /// Very few guarantees are given about this pointer, except that it is
+    /// properly aligned, and points to a valid instance of `T`
     pub fn to_raw_parts(this: Self) -> (NonNull<()>, M) {
         (Self::addr(this), Self::metadata(this))
     }
@@ -388,8 +395,8 @@ impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: Metadata<'a, T>> Gc<'gc, T, M> {
     ///
     /// # Safety
     ///
-    /// The given pointer must have been obtained from [`Gc::addr`] or [`Gc::to_raw_parts`]
-    /// within the same mutation session.
+    /// The given pointer must have been obtained from [`Gc::addr`] or
+    /// [`Gc::to_raw_parts`] within the same mutation session.
     pub unsafe fn from_raw(raw: NonNull<()>) -> Self {
         Gc {
             // SAFETY: `raw` is valid and aligned guaranteed by the caller.
@@ -400,18 +407,19 @@ impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: Metadata<'a, T>> Gc<'gc, T, M> {
 
     /// Returns true if two `Gc`s point to the same allocation.
     ///
-    /// Similarly to `Rc::ptr_eq` and `Arc::ptr_eq`, this function ignores the metadata of `dyn`
-    /// pointers.
+    /// Similarly to `Rc::ptr_eq` and `Arc::ptr_eq`, this function ignores the
+    /// metadata of `dyn` pointers.
     #[inline]
     pub fn ptr_eq(this: Self, other: Self) -> bool {
         Gc::addr(this) == Gc::addr(other)
     }
 
-    /// Returns true when a pointer is *dead* during finalization. This is equivalent to
-    /// `Weak::is_dead` for strong pointers.
+    /// Returns true when a pointer is *dead* during finalization. This is
+    /// equivalent to `Weak::is_dead` for strong pointers.
     ///
-    /// Any strong pointer reachable from the root will never be dead, BUT there can be strong
-    /// pointers reachable only through other weak pointers that can be dead.
+    /// Any strong pointer reachable from the root will never be dead, BUT there
+    /// can be strong pointers reachable only through other weak pointers
+    /// that can be dead.
     #[inline]
     pub fn is_dead(_: &Finalization<'gc>, gc: Self) -> bool {
         matches!(gc.ptr.header().color(), GcColor::White | GcColor::WhiteWeak)
@@ -419,9 +427,9 @@ impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: Metadata<'a, T>> Gc<'gc, T, M> {
 
     /// Manually marks a dead `Gc` pointer as reachable and keeps it alive.
     ///
-    /// Equivalent to `Weak::resurrect` for strong pointers. Manually marks this pointer and
-    /// all transitively held pointers as reachable, thus keeping them from being dropped this
-    /// collection cycle.
+    /// Equivalent to `Weak::resurrect` for strong pointers. Manually marks this
+    /// pointer and all transitively held pointers as reachable, thus
+    /// keeping them from being dropped this collection cycle.
     #[inline]
     pub fn resurrect(fc: &Finalization<'gc>, gc: Self) {
         fc.resurrect(gc.ptr);

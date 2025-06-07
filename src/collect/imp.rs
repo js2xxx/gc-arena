@@ -1,20 +1,24 @@
-use alloc::alloc::Global;
-use alloc::boxed::Box;
-use alloc::collections::{BTreeMap, BTreeSet, BinaryHeap, LinkedList, VecDeque};
-use alloc::rc::Rc;
-use alloc::string::String;
-use alloc::vec::Vec;
-use core::alloc::Allocator;
-use core::cell::{Cell, RefCell};
-use core::marker::PhantomData;
-use core::mem::MaybeUninit;
+use alloc::{
+    alloc::Global,
+    boxed::Box,
+    collections::{BTreeMap, BTreeSet, BinaryHeap, LinkedList, VecDeque},
+    rc::Rc,
+    string::String,
+    vec::Vec,
+};
+use core::{
+    alloc::Allocator,
+    cell::{Cell, RefCell},
+    marker::PhantomData,
+    mem::MaybeUninit,
+};
 #[cfg(feature = "std")]
 use std::collections::{HashMap, HashSet};
 
 use crate::collect::{Collect, Trace};
 
-/// If a type is static, we know that it can never hold `Gc` pointers, so it is safe to provide a
-/// simple empty `Collect` implementation.
+/// If a type is static, we know that it can never hold `Gc` pointers, so it is
+/// safe to provide a simple empty `Collect` implementation.
 #[macro_export]
 macro_rules! static_collect {
     ($type:ty) => {
@@ -55,20 +59,23 @@ static_collect!(std::ffi::OsStr);
 #[cfg(feature = "std")]
 static_collect!(std::ffi::OsString);
 
-/// For the purposes of tracing, a `MaybeUninit` is assumed to always be uninitialized. This means
-/// that the collector will never actually trace its contents. Therefore it will likely cause
-/// undefined behaviour to read a garbage collected pointer from the `MaybeUninit`, if it was set
-/// in a prior mutation.
+/// For the purposes of tracing, a `MaybeUninit` is assumed to always be
+/// uninitialized. This means that the collector will never actually trace its
+/// contents. Therefore it will likely cause undefined behaviour to read a
+/// garbage collected pointer from the `MaybeUninit`, if it was set in a prior
+/// mutation.
 unsafe impl<'gc, T> Collect<'gc> for MaybeUninit<T> {
     const NEEDS_TRACE: bool = false;
 }
 
-/// SAFETY: We know that a `&'static` reference cannot possibly point to `'gc` data, so it is safe
-/// to keep in a rooted objet and we do not have to trace through it.
+/// SAFETY: We know that a `&'static` reference cannot possibly point to `'gc`
+/// data, so it is safe to keep in a rooted objet and we do not have to trace
+/// through it.
 ///
-/// HOWEVER, There is an extra bound here that seems superfluous. If we have a `&'static T`, why do
-/// we require `T: 'static`, shouldn't this be implied, otherwise a `&'static T` would not be well-
-/// formed? WELL, there are currently some neat compiler bugs, observe...
+/// HOWEVER, There is an extra bound here that seems superfluous. If we have a
+/// `&'static T`, why do we require `T: 'static`, shouldn't this be implied,
+/// otherwise a `&'static T` would not be well- formed? WELL, there are
+/// currently some neat compiler bugs, observe...
 ///
 /// ```rust,compile_fail
 /// let arena = Arena::<Rootable![&'static Gc<'gc, i32>]>::new(Default::default(), |mc| {
@@ -76,17 +83,19 @@ unsafe impl<'gc, T> Collect<'gc> for MaybeUninit<T> {
 /// });
 /// ```
 ///
-/// At the time of this writing, without the extra `T: static` bound, the above code compiles and
-/// produces an arena with a reachable but un-traceable `Gc<'gc, i32>`, and this is unsound. This
-/// *is* ofc the stored type of the root, since the Arena is actually constructing a `&'static
-/// Gc<'static, i32>` as the root object, but this should still not rightfully compile due to the
-/// signature of the constructor callback passed to `Arena::new`. In fact, the 'static lifetime is a
-/// red herring, it is possible to change the internals of `Arena` such that the 'gc lifetime given
-/// to the callback is *not* 'static, and the problem persists.
+/// At the time of this writing, without the extra `T: static` bound, the above
+/// code compiles and produces an arena with a reachable but un-traceable
+/// `Gc<'gc, i32>`, and this is unsound. This *is* ofc the stored type of the
+/// root, since the Arena is actually constructing a `&'static Gc<'static, i32>`
+/// as the root object, but this should still not rightfully compile due to the
+/// signature of the constructor callback passed to `Arena::new`. In fact, the
+/// 'static lifetime is a red herring, it is possible to change the internals of
+/// `Arena` such that the 'gc lifetime given to the callback is *not* 'static,
+/// and the problem persists.
 ///
-/// It should not be required to have this extra lifetime bound, and yet! It fixes the above issue
-/// perfectly and the given example of unsoundness no longer compiles. So, until this rustc bug
-/// is fixed...
+/// It should not be required to have this extra lifetime bound, and yet! It
+/// fixes the above issue perfectly and the given example of unsoundness no
+/// longer compiles. So, until this rustc bug is fixed...
 ///
 /// DO NOT REMOVE THIS EXTRA `T: 'static` BOUND
 unsafe impl<'gc, T: ?Sized + 'static> Collect<'gc> for &'static T {
@@ -205,7 +214,8 @@ unsafe impl<'gc, T: Collect<'gc>, A: Collect<'gc> + Allocator> Collect<'gc> for 
     }
 }
 
-// FIXME: Add allocator tracing for `alloc::collections::*` once their APIs are exposed.
+// FIXME: Add allocator tracing for `alloc::collections::*` once their APIs are
+// exposed.
 
 unsafe impl<'gc, T: Collect<'gc>> Collect<'gc> for LinkedList<T> {
     const NEEDS_TRACE: bool = T::NEEDS_TRACE;

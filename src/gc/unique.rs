@@ -11,13 +11,18 @@ use core::{
 };
 
 use crate::{
-    collect::{Collect, Trace}, context::Mutation, ptr::{native, MetaCollect, Metadata, PtrMeta, PtrMetadata, Uninit}, types::{GcBox, GcColor, Invariant}, vec::Vec, Finalization, Gc
+    Finalization, Gc,
+    collect::{Collect, Trace},
+    context::Mutation,
+    ptr::{MetaCollect, Metadata, PtrMeta, PtrMetadata, Uninit, native},
+    types::{GcBox, GcColor, Invariant},
+    vec::Vec,
 };
 
 /// A uniquely-owned garbage-collected pointer to a type `T`.
 ///
-/// Unlike [`Gc`] this pointer is known to be unique, and as such allows mutation
-/// without the use of interior mutability.
+/// Unlike [`Gc`] this pointer is known to be unique, and as such allows
+/// mutation without the use of interior mutability.
 ///
 /// [`Gc`]: crate::Gc
 /// [`Collect`]: crate::Collect
@@ -131,10 +136,7 @@ impl<'gc, T: ?Sized + Uninit + 'gc, M: 'gc> Unique<'gc, T, M> {
         M: MetaCollect<'gc, 'a, T>,
     {
         let ptr = mc.allocate::<T, M, ZEROED>(meta);
-        let ret: Unique<'_, T, M> = Unique {
-            ptr,
-            _invariant: PhantomData,
-        };
+        let ret: Unique<'_, T, M> = Unique { ptr, _invariant: PhantomData };
         #[cfg(not(miri))]
         return ret;
         #[cfg(miri)]
@@ -149,13 +151,15 @@ impl<'gc, T: ?Sized + Uninit + 'gc, M: 'gc> Unique<'gc, T, M> {
         }
     }
 
-    /// Converts to `Unique<'gc, T::Init, M>`, assuming its contents are initialized.
+    /// Converts to `Unique<'gc, T::Init, M>`, assuming its contents are
+    /// initialized.
     ///
     /// # Safety
     ///
-    /// As with [`MaybeUninit::assume_init`], it is up to the caller to guarantee
-    /// that the value really is in an initialized state. Calling this when the
-    /// content is not yet fully initialized will likely cause undefined behaviour.
+    /// As with [`MaybeUninit::assume_init`], it is up to the caller to
+    /// guarantee that the value really is in an initialized state. Calling
+    /// this when the content is not yet fully initialized will likely cause
+    /// undefined behaviour.
     ///
     /// # Examples
     ///
@@ -213,8 +217,8 @@ impl<'gc, T: ?Sized + Uninit + 'gc, M: 'gc> Unique<'gc, T, M> {
 impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, T> {
     /// Creates a new `Unique` containing the given value.
     ///
-    /// As the allocated value is statically known not to have any other references, we can safely
-    /// modify it through this pointer.
+    /// As the allocated value is statically known not to have any other
+    /// references, we can safely modify it through this pointer.
     ///
     /// # Examples
     /// ```
@@ -239,13 +243,11 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, T> {
         let ptr = mc.allocate::<T, (), false>(());
         // SAFETY: `ptr` is a valid uninit pointer to `T`.
         unsafe { ptr.unerase::<T, ()>().write(t) };
-        Unique {
-            ptr,
-            _invariant: PhantomData,
-        }
+        Unique { ptr, _invariant: PhantomData }
     }
 
-    /// Creates a new `Unique` containing the given value, unsizing to a dynamically sized type.
+    /// Creates a new `Unique` containing the given value, unsizing to a
+    /// dynamically sized type.
     #[inline]
     pub fn new_unsize<'a, Dyn>(mc: &Mutation<'gc>, t: T) -> Unique<'gc, Dyn>
     where
@@ -287,7 +289,8 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, T> {
         Unique::with_metadata::<false>(mc, ())
     }
 
-    /// Creates a new `Unique` with uninitialized contents, with the memory being filled with `0` bytes.
+    /// Creates a new `Unique` with uninitialized contents, with the memory
+    /// being filled with `0` bytes.
     ///
     /// # Examples
     /// ```
@@ -332,7 +335,8 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, [T]> {
         Unique::with_metadata::<false>(mc, len)
     }
 
-    /// Constructs a new garbage-collected slice with unitialized contents, with the memory being filled with `0` bytes.
+    /// Constructs a new garbage-collected slice with unitialized contents, with
+    /// the memory being filled with `0` bytes.
     ///
     /// # Examples
     /// ```
@@ -350,8 +354,9 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, [T]> {
 
     /// Transforms an iterator into a `Unique<'gc, [T]>`.
     ///
-    /// The signature of this function differs from [`Iterator::collect`] from the
-    /// standard library since a [`Mutation`] is required to handle the allocation.
+    /// The signature of this function differs from [`Iterator::collect`] from
+    /// the standard library since a [`Mutation`] is required to handle the
+    /// allocation.
     pub fn collect<I: IntoIterator<Item = T>>(mc: &Mutation<'gc>, iter: I) -> Unique<'gc, [T]> {
         Vec::collect(mc, iter).into_unique_slice(mc)
     }
@@ -370,7 +375,8 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, MaybeUninit<T>> {
 }
 
 impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, [MaybeUninit<T>]> {
-    /// Constructs a new garbage-collected slice, cloning each element from the given slice.
+    /// Constructs a new garbage-collected slice, cloning each element from the
+    /// given slice.
     ///
     /// # Examples
     /// ```
@@ -395,7 +401,8 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, [MaybeUninit<T>]> {
         unsafe { self.assume_init() }
     }
 
-    /// Constructs a new garbage-collected slice, copying each element from the given slice.
+    /// Constructs a new garbage-collected slice, copying each element from the
+    /// given slice.
     ///
     /// If `T` does not implement `Copy`, use [`write_clone_of_slice`].
     ///
@@ -423,7 +430,8 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, [MaybeUninit<T>]> {
         unsafe { Self::assume_init(self) }
     }
 
-    /// Constructs a new garbage-collected slice, initializing each element with the given value.
+    /// Constructs a new garbage-collected slice, initializing each element with
+    /// the given value.
     ///
     /// # Examples
     ///
@@ -445,7 +453,8 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, [MaybeUninit<T>]> {
         unsafe { Self::assume_init(self) }
     }
 
-    /// Constructs a new garbage-collected slice, initializing each element with the given function.
+    /// Constructs a new garbage-collected slice, initializing each element with
+    /// the given function.
     ///
     /// # Examples
     ///
@@ -517,7 +526,8 @@ impl<'gc, T: ?Sized + 'gc> Unique<'gc, T> {
     ///
     /// # Safety
     ///
-    /// It must be valid to dereference a `*mut U` that has come from casting a `*mut T`.
+    /// It must be valid to dereference a `*mut U` that has come from casting a
+    /// `*mut T`.
     #[inline]
     pub unsafe fn cast<U: 'gc>(this: Unique<'gc, T>) -> Unique<'gc, U> {
         Unique {
@@ -547,7 +557,8 @@ impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: Metadata<'a, T>> Unique<'gc, T, M> {
 
     /// Transforms the `Unique` into a raw pointer.
     ///
-    /// The pointer is guaranteed to be valid only in the current collection phase.
+    /// The pointer is guaranteed to be valid only in the current collection
+    /// phase.
     pub fn into_raw_parts(this: Self) -> (NonNull<()>, M) {
         (Self::addr(&this), Self::metadata(&this))
     }
@@ -557,9 +568,9 @@ impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: Metadata<'a, T>> Unique<'gc, T, M> {
     /// # Safety
     ///
     /// The given pointer must have been obtained from [`Unique::addr`],
-    /// [`Unique::into_raw_parts`], or [`Gc::addr`] within the same mutation session.
-    /// There must also exist no other garbage collected pointers which point to the
-    /// same allocation.
+    /// [`Unique::into_raw_parts`], or [`Gc::addr`] within the same mutation
+    /// session. There must also exist no other garbage collected pointers
+    /// which point to the same allocation.
     pub unsafe fn from_raw(raw: NonNull<()>) -> Unique<'gc, T, M> {
         Unique {
             // SAFETY: `raw` is valid and aligned guaranteed by the caller.
@@ -574,8 +585,8 @@ impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: Metadata<'a, T>> Unique<'gc, T, M> {
         unsafe { Gc::from_raw(Unique::into_raw_parts(self).0) }
     }
 
-    /// Returns true when a pointer is *dead* during finalization. This is equivalent to
-    /// [`Gc::is_dead`].
+    /// Returns true when a pointer is *dead* during finalization. This is
+    /// equivalent to [`Gc::is_dead`].
     ///
     /// Any unique pointer reachable from the root will never be dead.
     #[inline]
@@ -583,11 +594,12 @@ impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: Metadata<'a, T>> Unique<'gc, T, M> {
         matches!(gc.ptr.header().color(), GcColor::White | GcColor::WhiteWeak)
     }
 
-    /// Manually marks a dead `Unique` GC pointer as reachable and keeps it alive.
+    /// Manually marks a dead `Unique` GC pointer as reachable and keeps it
+    /// alive.
     ///
-    /// Equivalent to [`Gc::resurrect`]. Manually marks this pointer and all transitively
-    /// held pointers as reachable, thus keeping them from being dropped this collection
-    /// cycle.
+    /// Equivalent to [`Gc::resurrect`]. Manually marks this pointer and all
+    /// transitively held pointers as reachable, thus keeping them from
+    /// being dropped this collection cycle.
     #[inline]
     pub fn resurrect(fc: &Finalization<'gc>, gc: &Self) {
         fc.resurrect(gc.ptr);
@@ -597,23 +609,25 @@ impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: Metadata<'a, T>> Unique<'gc, T, M> {
 impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: PtrMetadata<'a, T>> Unique<'gc, T, M> {
     /// Returns a raw pointer to the `Unique`'s contents.
     ///
-    /// Very few guarantees are given about this pointer, except that it is properly
-    /// aligned, and points to a valid instance of `T`
+    /// Very few guarantees are given about this pointer, except that it is
+    /// properly aligned, and points to a valid instance of `T`
     pub fn as_ptr(this: &Self) -> *const T {
         unsafe { this.ptr.unerase::<T, M>().as_ptr() }
     }
 
     /// Returns a raw mutable pointer to the `Unique`'s contents.
     ///
-    /// Very few guarantees are given about this pointer, except that it is properly
-    /// aligned, points to a valid instance of `T`, and may be written to.
+    /// Very few guarantees are given about this pointer, except that it is
+    /// properly aligned, points to a valid instance of `T`, and may be
+    /// written to.
     pub fn as_mut_ptr(this: &mut Self) -> *mut T {
         unsafe { this.ptr.unerase::<T, M>().as_ptr() }
     }
 
     /// Transforms the `Unique` into a raw pointer.
     ///
-    /// The pointer is guaranteed to be valid only in the current collection phase.
+    /// The pointer is guaranteed to be valid only in the current collection
+    /// phase.
     pub fn into_ptr(this: Self) -> *mut T {
         unsafe { this.ptr.unerase::<T, M>().as_ptr() }
     }
@@ -622,9 +636,10 @@ impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: PtrMetadata<'a, T>> Unique<'gc, T, M> {
     ///
     /// # Safety
     ///
-    /// The given pointer must have been obtained from [`Unique::as_ptr`], [`Unique::into_ptr`],
-    /// or [`Gc::as_ptr`] within the same mutation session. There must also exist no other
-    /// garbage collected pointers which point to the same allocation.
+    /// The given pointer must have been obtained from [`Unique::as_ptr`],
+    /// [`Unique::into_ptr`], or [`Gc::as_ptr`] within the same mutation
+    /// session. There must also exist no other garbage collected pointers
+    /// which point to the same allocation.
     pub unsafe fn from_ptr(raw: *mut T) -> Unique<'gc, T, M> {
         Unique {
             // SAFETY: `raw` is valid and aligned guaranteed by the caller.
@@ -790,7 +805,8 @@ mod test {
             }
         }
 
-        // SAFETY: DropWatcher's drop implementation does not dereference any garbage-collected pointers.
+        // SAFETY: DropWatcher's drop implementation does not dereference any
+        // garbage-collected pointers.
         unsafe impl Collect<'_> for DropWatcher {
             const NEEDS_TRACE: bool = false;
         }

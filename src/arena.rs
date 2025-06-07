@@ -1,8 +1,9 @@
-use alloc::alloc::Global;
-use alloc::boxed::Box;
-use core::marker::PhantomData;
-use core::ops::DerefMut;
-use core::{alloc::Allocator, ops::Deref};
+use alloc::{alloc::Global, boxed::Box};
+use core::{
+    alloc::Allocator,
+    marker::PhantomData,
+    ops::{Deref, DerefMut},
+};
 
 use crate::{
     Collect,
@@ -10,12 +11,13 @@ use crate::{
     metrics::Metrics,
 };
 
-/// A trait that produces a [`Collect`]-able type for the given lifetime. This is used to produce
-/// the root [`Collect`] instance in an [`Arena`].
+/// A trait that produces a [`Collect`]-able type for the given lifetime. This
+/// is used to produce the root [`Collect`] instance in an [`Arena`].
 ///
-/// In order to use an implementation of this trait in an [`Arena`], it must implement
-/// `Rootable<'a>` for *any* possible `'a`. This is necessary so that the `Root` types can be
-/// branded by the unique, invariant lifetimes that makes an `Arena` sound.
+/// In order to use an implementation of this trait in an [`Arena`], it must
+/// implement `Rootable<'a>` for *any* possible `'a`. This is necessary so that
+/// the `Root` types can be branded by the unique, invariant lifetimes that
+/// makes an `Arena` sound.
 pub trait Rootable<'a> {
     /// The rooted GC-managed type.
     type Root: ?Sized + 'a;
@@ -23,7 +25,8 @@ pub trait Rootable<'a> {
 
 /// A marker type used by the `Rootable!` macro instead of a bare trait object.
 ///
-/// Prevents having to include extra ?Sized bounds on every `for<'a> Rootable<'a>`.
+/// Prevents having to include extra ?Sized bounds on every `for<'a>
+/// Rootable<'a>`.
 #[doc(hidden)]
 pub struct __DynRootable<T: ?Sized>(PhantomData<T>);
 
@@ -33,9 +36,9 @@ impl<'a, T: ?Sized + Rootable<'a>> Rootable<'a> for __DynRootable<T> {
 
 /// A convenience macro for quickly creating a type that implements `Rootable`.
 ///
-/// The macro takes a single argument, which should be a generic type with elided lifetimes.
-/// When used as a root object, every instance of the elided lifetime will be replaced with
-/// the branding lifetime.
+/// The macro takes a single argument, which should be a generic type with
+/// elided lifetimes. When used as a root object, every instance of the elided
+/// lifetime will be replaced with the branding lifetime.
 ///
 /// ```
 /// # use gc_arena::{Arena, Collect, Gc, Rootable};
@@ -53,8 +56,9 @@ impl<'a, T: ?Sized + Rootable<'a>> Rootable<'a> for __DynRootable<T> {
 /// # }
 /// ```
 ///
-/// The macro can also be used to create implementations of `Rootable` that use other generic
-/// parameters, though in complex cases it may be better to implement `Rootable` directly.
+/// The macro can also be used to create implementations of `Rootable` that use
+/// other generic parameters, though in complex cases it may be better to
+/// implement `Rootable` directly.
 ///
 /// ```
 /// # use gc_arena::{Arena, Collect, Gc, Rootable};
@@ -86,15 +90,18 @@ pub type Root<'a, R> = <R as Rootable<'a>>::Root;
 #[expect(missing_docs, reason = "self-describing type")]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum CollectionPhase {
-    /// The arena is done with a collection cycle and is waiting to be restarted.
+    /// The arena is done with a collection cycle and is waiting to be
+    /// restarted.
     Sleeping,
-    /// The arena is currently tracing objects from the root to determine reachability.
+    /// The arena is currently tracing objects from the root to determine
+    /// reachability.
     Marking,
-    /// The arena has finished tracing, all reachable objects are marked. This may transition
-    /// back to `Marking` if write barriers occur.
+    /// The arena has finished tracing, all reachable objects are marked. This
+    /// may transition back to `Marking` if write barriers occur.
     Marked,
-    /// The arena has determined a set of unreachable objects and has started freeing them. At this
-    /// point, marking is no longer taking place so the root may have reachable, unmarked pointers.
+    /// The arena has determined a set of unreachable objects and has started
+    /// freeing them. At this point, marking is no longer taking place so
+    /// the root may have reachable, unmarked pointers.
     Sweeping,
 }
 
@@ -126,23 +133,27 @@ impl<A: Allocator> Drop for BoxContext<A> {
 
 /// A generic, garbage collected arena.
 ///
-/// Garbage collected arenas allow for isolated sets of garbage collected objects with zero-overhead
-/// garbage collected pointers. It provides incremental mark and sweep garbage collection which
-/// must be manually triggered outside the `mutate` method, and works best when units of work inside
-/// `mutate` can be kept relatively small. It is designed primarily to be a garbage collector for
-/// scripting language runtimes.
+/// Garbage collected arenas allow for isolated sets of garbage collected
+/// objects with zero-overhead garbage collected pointers. It provides
+/// incremental mark and sweep garbage collection which must be manually
+/// triggered outside the `mutate` method, and works best when units of work
+/// inside `mutate` can be kept relatively small. It is designed primarily to be
+/// a garbage collector for scripting language runtimes.
 ///
-/// The arena API is able to provide extremely cheap Gc pointers because it is based around
-/// "generativity". During construction and access, the root type is branded by a unique, invariant
-/// lifetime `'gc` which ensures that `Gc` pointers must be contained inside the root object
-/// hierarchy and cannot escape the arena callbacks or be smuggled inside another arena. This way,
-/// the arena can be sure that during mutation, all `Gc` pointers come from the arena we expect
-/// them to come from, and that they're all either reachable from root or have been allocated during
-/// the current `mutate` call. When not inside the `mutate` callback, the arena knows that all `Gc`
-/// pointers must be either reachable from root or they are unreachable and safe to collect. In
-/// this way, incremental garbage collection can be achieved (assuming "sufficiently small" calls
-/// to `mutate`) that is both extremely safe and zero overhead vs what you would write in C with raw
-/// pointers and manually ensuring that invariants are held.
+/// The arena API is able to provide extremely cheap Gc pointers because it is
+/// based around "generativity". During construction and access, the root type
+/// is branded by a unique, invariant lifetime `'gc` which ensures that `Gc`
+/// pointers must be contained inside the root object hierarchy and cannot
+/// escape the arena callbacks or be smuggled inside another arena. This way,
+/// the arena can be sure that during mutation, all `Gc` pointers come from the
+/// arena we expect them to come from, and that they're all either reachable
+/// from root or have been allocated during the current `mutate` call. When not
+/// inside the `mutate` callback, the arena knows that all `Gc` pointers must be
+/// either reachable from root or they are unreachable and safe to collect. In
+/// this way, incremental garbage collection can be achieved (assuming
+/// "sufficiently small" calls to `mutate`) that is both extremely safe and zero
+/// overhead vs what you would write in C with raw pointers and manually
+/// ensuring that invariants are held.
 pub struct Arena<R, A: Allocator = Global>
 where
     R: for<'a> Rootable<'a>,
@@ -156,8 +167,10 @@ where
     R: for<'a> Rootable<'a>,
     for<'a> Root<'a, R>: Sized,
 {
-    /// Create a new arena with the given garbage collector tuning parameters. You must provide a
-    /// closure that accepts a `Mutation<'gc>` and returns the appropriate root.
+    /// Create a new arena with the given garbage collector tuning parameters.
+    ///
+    /// The caller should provide a closure that accepts a `Mutation<'gc>` and
+    /// returns the appropriate root.
     pub fn new<F>(f: F) -> Arena<R>
     where
         F: for<'gc> FnOnce(&Mutation<'gc>) -> Root<'gc, R>,
@@ -179,8 +192,10 @@ where
     R: for<'a> Rootable<'a>,
     for<'a> Root<'a, R>: Sized,
 {
-    /// Create a new arena with the given garbage collector tuning parameters. You must provide a
-    /// closure that accepts a `Mutation<'gc>` and returns the appropriate root.
+    /// Create a new arena with the given garbage collector tuning parameters.
+    ///
+    /// The caller should provide a closure that accepts a `Mutation<'gc>` and
+    /// returns the appropriate root.
     pub fn new_in<F>(alloc: A, f: F) -> Self
     where
         F: for<'gc> FnOnce(&Mutation<'gc>) -> Root<'gc, R>,
@@ -262,10 +277,11 @@ impl<R, A: Allocator> Arena<R, A>
 where
     R: for<'a> Rootable<'a>,
 {
-    /// The primary means of interacting with a garbage collected arena. Accepts a callback which
-    /// receives a `Mutation<'gc>` and a reference to the root, and can return any non garbage
-    /// collected value. The callback may "mutate" any part of the object graph during this call,
-    /// but no garbage collection will take place during this method.
+    /// The primary means of interacting with a garbage collected arena. Accepts
+    /// a callback which receives a `Mutation<'gc>` and a reference to the root,
+    /// and can return any non garbage collected value. The callback may
+    /// "mutate" any part of the object graph during this call, but no garbage
+    /// collection will take place during this method.
     #[inline]
     pub fn mutate<F, T>(&self, f: F) -> T
     where
@@ -280,8 +296,8 @@ where
         }
     }
 
-    /// An alternative version of [`Arena::mutate`] which allows mutating the root set, at the
-    /// cost of an extra write barrier.
+    /// An alternative version of [`Arena::mutate`] which allows mutating the
+    /// root set, at the cost of an extra write barrier.
     #[inline]
     pub fn mutate_root<F, T>(&mut self, f: F) -> T
     where
@@ -326,15 +342,17 @@ where
 {
     /// Run incremental garbage collection until the allocation debt is zero.
     ///
-    /// This will run through ALL phases of the collection cycle until the debt is zero, including
-    /// implicitly finishing the current cycle and starting a new one (transitioning from
-    /// [`CollectionPhase::Sweeping`] to [`CollectionPhase::Sleeping`]). Since this method runs
-    /// until debt is zero with no guaranteed return at any specific transition, you may need to use
-    /// other methods like [`Arena::mark_debt`] and [`Arena::cycle_debt`] if you need to keep close
-    /// track of the current collection phase.
+    /// This will run through ALL phases of the collection cycle until the debt
+    /// is zero, including implicitly finishing the current cycle and starting a
+    /// new one (transitioning from [`CollectionPhase::Sweeping`] to
+    /// [`CollectionPhase::Sleeping`]). Since this method runs until debt is
+    /// zero with no guaranteed return at any specific transition, you may need
+    /// to use other methods like [`Arena::mark_debt`] and [`Arena::cycle_debt`]
+    /// if you need to keep close track of the current collection phase.
     ///
-    /// There is no minimum unit of work enforced here, so it may be faster to only call this method
-    /// when the allocation debt is above some minimum threshold.
+    /// There is no minimum unit of work enforced here, so it may be faster to
+    /// only call this method when the allocation debt is above some minimum
+    /// threshold.
     #[inline]
     pub fn collect_debt(&mut self) {
         unsafe {
@@ -344,15 +362,18 @@ where
         }
     }
 
-    /// Run only the *marking* part of incremental garbage collection until allocation debt is zero.
+    /// Run only the *marking* part of incremental garbage collection until
+    /// allocation debt is zero.
     ///
-    /// This does *not* transition collection past the [`CollectionPhase::Marked`]
-    /// phase. Does nothing if the collection phase is [`CollectionPhase::Marked`] or
-    /// [`CollectionPhase::Sweeping`], otherwise acts like [`Arena::collect_debt`].
+    /// This does *not* transition collection past the
+    /// [`CollectionPhase::Marked`] phase. Does nothing if the collection
+    /// phase is [`CollectionPhase::Marked`] or [`CollectionPhase::Sweeping`],
+    /// otherwise acts like [`Arena::collect_debt`].
     ///
-    /// If this method stops because the arena is now fully marked (the collection phase is
-    /// [`CollectionPhase::Marked`]), then a [`MarkedArena`] object will be returned to allow
-    /// you to examine the state of the fully marked arena.
+    /// If this method stops because the arena is now fully marked (the
+    /// collection phase is [`CollectionPhase::Marked`]), then a
+    /// [`MarkedArena`] object will be returned to allow you to examine the
+    /// state of the fully marked arena.
     #[inline]
     pub fn mark_debt(&mut self) -> Option<MarkedArena<'_, R, A>> {
         unsafe {
@@ -368,14 +389,17 @@ where
         }
     }
 
-    /// Runs ALL of the remaining *marking* part of the current garbage collection cycle.
+    /// Runs ALL of the remaining *marking* part of the current garbage
+    /// collection cycle.
     ///
-    /// Similarly to [`Arena::mark_debt`], this does not transition collection past the
-    /// [`CollectionPhase::Marked`] phase, and does nothing if the collector is currently in the
-    /// [`CollectionPhase::Marked`] phase or the [`CollectionPhase::Sweeping`] phase.
+    /// Similarly to [`Arena::mark_debt`], this does not transition collection
+    /// past the [`CollectionPhase::Marked`] phase, and does nothing if the
+    /// collector is currently in the [`CollectionPhase::Marked`] phase or the
+    /// [`CollectionPhase::Sweeping`] phase.
     ///
-    /// This method will always fully mark the arena and return a [`MarkedArena`] object as long as
-    /// the current phase is not [`CollectionPhase::Sweeping`].
+    /// This method will always fully mark the arena and return a
+    /// [`MarkedArena`] object as long as the current phase is not
+    /// [`CollectionPhase::Sweeping`].
     #[inline]
     pub fn finish_marking(&mut self) -> Option<MarkedArena<'_, R, A>> {
         unsafe {
@@ -393,14 +417,16 @@ where
 
     /// Run the *current* collection cycle until the allocation debt is zero.
     ///
-    /// This is nearly identical to the [`Arena::collect_debt`] method, except it
-    /// *always* returns immediately when a cycle is finished (when phase transitions
-    /// to [`CollectionPhase::Sleeping`]), and will never transition directly from
-    /// [`CollectionPhase::Sweeping`] to [`CollectionPhase::Marking`] within a single call, even if
-    /// there is enough outstanding debt to do so.
+    /// This is nearly identical to the [`Arena::collect_debt`] method, except
+    /// it *always* returns immediately when a cycle is finished (when phase
+    /// transitions to [`CollectionPhase::Sleeping`]), and will never transition
+    /// directly from [`CollectionPhase::Sweeping`] to
+    /// [`CollectionPhase::Marking`] within a single call, even if there is
+    /// enough outstanding debt to do so.
     ///
-    /// This mostly only important when the user of an `Arena` needs to closely track collection
-    /// phases, otherwise [`Arena::collect_debt`] simpler to use.
+    /// This mostly only important when the user of an `Arena` needs to closely
+    /// track collection phases, otherwise [`Arena::collect_debt`] simpler
+    /// to use.
     #[inline]
     pub fn cycle_debt(&mut self) {
         unsafe {
@@ -411,10 +437,11 @@ where
         }
     }
 
-    /// Run the current garbage collection cycle to completion, stopping once garbage collection
-    /// has entered the [`CollectionPhase::Sleeping`] phase. If the collector is currently sleeping,
-    /// then this restarts the collector and performs a full collection before transitioning back to
-    /// the sleep phase.
+    /// Run the current garbage collection cycle to completion, stopping once
+    /// garbage collection has entered the [`CollectionPhase::Sleeping`]
+    /// phase. If the collector is currently sleeping, then this restarts
+    /// the collector and performs a full collection before transitioning back
+    /// to the sleep phase.
     #[inline]
     pub fn finish_cycle(&mut self) {
         unsafe {
@@ -434,12 +461,12 @@ where
 {
     /// Examine the state of a fully marked arena.
     ///
-    /// Allows you to determine whether `Weak` pointers are "dead" (aka, soon-to-be-dropped) and
-    /// potentially resurrect them for this cycle.
+    /// Allows you to determine whether `Weak` pointers are "dead" (aka,
+    /// soon-to-be-dropped) and potentially resurrect them for this cycle.
     ///
-    /// Note that the arena is guaranteed to be *fully marked* only at the *beginning* of this
-    /// callback, any mutation that resurrects a pointer or triggers a write barrier can immediately
-    /// invalidate this.
+    /// Note that the arena is guaranteed to be *fully marked* only at the
+    /// *beginning* of this callback, any mutation that resurrects a pointer
+    /// or triggers a write barrier can immediately invalidate this.
     #[inline]
     pub fn finalize<F, T>(self, f: F) -> T
     where
@@ -469,13 +496,14 @@ where
     }
 }
 
-/// Create a temporary arena without a root object and perform the given operation on it.
+/// Create a temporary arena without a root object and perform the given
+/// operation on it.
 ///
-/// No garbage collection will be done until the very end of the call, at which point all
-/// allocations will be collected.
+/// No garbage collection will be done until the very end of the call, at which
+/// point all allocations will be collected.
 ///
-/// This is a convenience function that makes it a little easier to quickly test code that uses
-/// `gc-arena`, it is not very useful on its own.
+/// This is a convenience function that makes it a little easier to quickly test
+/// code that uses `gc-arena`, it is not very useful on its own.
 pub fn rootless_mutate<F, R>(f: F) -> R
 where
     F: for<'gc> FnOnce(&Mutation<'gc>) -> R,

@@ -1,6 +1,5 @@
-use core::{cell::RefCell, fmt, mem};
-
 use alloc::rc::{Rc, Weak};
+use core::{cell::RefCell, fmt, mem};
 
 use crate::{
     Gc, Mutation, Rootable,
@@ -12,9 +11,8 @@ use crate::{
 
 /// A way of registering GC roots dynamically.
 ///
-/// Use this type as (a part of) an [`Arena`](crate::Arena) root to enable dynamic rooting of
-/// GC'd objects through [`DynamicRoot`] handles.
-//
+/// Use this type as (a part of) an [`Arena`](crate::Arena) root to enable
+/// dynamic rooting of GC'd objects through [`DynamicRoot`] handles.
 // SAFETY: This allows us to convert `Gc<'gc>` pointers to `Gc<'static>` and back, and this is VERY
 // sketchy. We know it is safe because:
 //   1) The `DynamicRootSet` must be created inside an arena and is branded with an invariant `'gc`
@@ -37,24 +35,22 @@ unsafe impl<'gc> Collect<'gc> for DynamicRootSet<'gc> {
 impl<'gc> DynamicRootSet<'gc> {
     /// Creates a new, empty root set.
     pub fn new(mc: &Mutation<'gc>) -> Self {
-        DynamicRootSet(Gc::new(
-            mc,
-            Inner {
-                slots: Rc::new(RefCell::new(Slots::new(mc))),
-            },
-        ))
+        DynamicRootSet(Gc::new(mc, Inner {
+            slots: Rc::new(RefCell::new(Slots::new(mc))),
+        }))
     }
 
     /// Puts a root inside this root set.
     ///
-    /// The returned handle can be freely stored outside the current arena, and will keep the root
-    /// alive across garbage collections.
+    /// The returned handle can be freely stored outside the current arena, and
+    /// will keep the root alive across garbage collections.
     pub fn stash<R: for<'a> Rootable<'a>>(
         &self,
         mc: &Mutation<'gc>,
         root: Gc<'gc, Root<'gc, R>>,
     ) -> DynamicRoot<R> {
-        // SAFETY: We are adopting a new `Gc` pointer, so we must invoke a write barrier.
+        // SAFETY: We are adopting a new `Gc` pointer, so we must invoke a write
+        // barrier.
         mc.backward_barrier(self.0, Some(root));
 
         let mut slots = self.0.slots.borrow_mut();
@@ -75,8 +71,8 @@ impl<'gc> DynamicRootSet<'gc> {
     ///
     /// # Panics
     ///
-    /// Panics if the handle doesn't belong to this root set. For the non-panicking variant, use
-    /// [`try_fetch`](Self::try_fetch).
+    /// Panics if the handle doesn't belong to this root set. For the
+    /// non-panicking variant, use [`try_fetch`](Self::try_fetch).
     #[inline]
     pub fn fetch<R: for<'r> Rootable<'r>>(&self, root: &DynamicRoot<R>) -> Gc<'gc, Root<'gc, R>> {
         if self.contains(root) {
@@ -88,8 +84,8 @@ impl<'gc> DynamicRootSet<'gc> {
         }
     }
 
-    /// Gets immutable access to the given root, or returns an error if the handle doesn't belong
-    /// to this root set.
+    /// Gets immutable access to the given root, or returns an error if the
+    /// handle doesn't belong to this root set.
     #[inline]
     pub fn try_fetch<R: for<'r> Rootable<'r>>(
         &self,
@@ -107,11 +103,12 @@ impl<'gc> DynamicRootSet<'gc> {
     /// Tests if the given handle belongs to this root set.
     #[inline]
     pub fn contains<R: for<'r> Rootable<'r>>(&self, root: &DynamicRoot<R>) -> bool {
-        // NOTE: We are making an assumption about how `Weak` works that is currently true and
-        // surely MUST continue to be true, but is possibly under-specified in the stdlib. We are
-        // assuming that if the `Weak` pointer held in the given `DynamicRoot` points to a *dropped*
-        // root set, that `Weak::as_ptr` will return a pointer that cannot possibly belong to a
-        // live `Rc`.
+        // NOTE: We are making an assumption about how `Weak` works that is currently
+        // true and surely MUST continue to be true, but is possibly
+        // under-specified in the stdlib. We are assuming that if the `Weak`
+        // pointer held in the given `DynamicRoot` points to a *dropped*
+        // root set, that `Weak::as_ptr` will return a pointer that cannot possibly
+        // belong to a live `Rc`.
         let ours = unsafe {
             mem::transmute::<*const RefCell<Slots<'gc>>, *const RefCell<Slots<'static>>>(
                 Rc::as_ptr(&self.0.slots),
@@ -122,8 +119,8 @@ impl<'gc> DynamicRootSet<'gc> {
     }
 }
 
-/// Handle to a `Gc` pointer held inside a [`DynamicRootSet`] which is `'static` and can be held
-/// outside of the arena.
+/// Handle to a `Gc` pointer held inside a [`DynamicRootSet`] which is `'static`
+/// and can be held outside of the arena.
 pub struct DynamicRoot<R: for<'gc> Rootable<'gc>> {
     ptr: Gc<'static, Root<'static, R>>,
     slots: Weak<RefCell<Slots<'static>>>,
@@ -158,20 +155,25 @@ where
 {
     /// Get a pointer to the held object.
     ///
-    /// This returns [`Gc::as_ptr`] for the [`Gc`] provided when the `DynamicRoot` is stashed.
+    /// This returns [`Gc::as_ptr`] for the [`Gc`] provided when the
+    /// `DynamicRoot` is stashed.
     ///
     /// # Safety
     ///
-    /// It is possible to use this to reconstruct the original `Gc` pointer by calling the unsafe
-    /// [`Gc::from_ptr`], but this is incredibly dangerous!
+    /// It is possible to use this to reconstruct the original `Gc` pointer by
+    /// calling the unsafe [`Gc::from_ptr`], but this is incredibly
+    /// dangerous!
     ///
-    /// First, if the [`DynamicRootSet`] in which the `DynamicRoot` was stashed has been collected,
-    /// then either the returned pointer or other transitive `Gc` pointers objects may be dangling.
-    /// The parent `DynamicRootSet` *must* still be uncollected in order to do this soundly.
+    /// First, if the [`DynamicRootSet`] in which the `DynamicRoot` was stashed
+    /// has been collected, then either the returned pointer or other
+    /// transitive `Gc` pointers objects may be dangling. The parent
+    /// `DynamicRootSet` *must* still be uncollected in order to do this
+    /// soundly.
     ///
-    /// Second, the `'gc` lifetime returned here is unbound, so it is meaningless and can allow
-    /// improper mixing of objects across arenas. The returned `'gc` lifetime must be bound to only
-    /// the arena that holds the parent `DynamicRootSet`.
+    /// Second, the `'gc` lifetime returned here is unbound, so it is
+    /// meaningless and can allow improper mixing of objects across arenas.
+    /// The returned `'gc` lifetime must be bound to only the arena that
+    /// holds the parent `DynamicRootSet`.
     #[inline]
     pub fn as_ptr<'gc>(&self) -> *const Root<'gc, R> {
         unsafe {
@@ -180,7 +182,8 @@ where
     }
 }
 
-/// Error returned when trying to fetch a [`DynamicRoot`] from the wrong [`DynamicRootSet`].
+/// Error returned when trying to fetch a [`DynamicRoot`] from the wrong
+/// [`DynamicRootSet`].
 #[derive(Debug)]
 pub struct MismatchedRootSet(());
 
@@ -206,8 +209,8 @@ type Index = usize;
 
 // By avoiding Option<usize>, `Slot` can go from 24 bytes to 16.
 //
-// usize::MAX can never be a valid index without using more than `usize::MAX` memory in the slots
-// vec, which is impossible.
+// usize::MAX can never be a valid index without using more than `usize::MAX`
+// memory in the slots vec, which is impossible.
 const NULL_INDEX: Index = usize::MAX;
 
 enum Slot<'gc> {
@@ -244,8 +247,8 @@ impl<'gc> Slots<'gc> {
     }
 
     fn add(&mut self, mc: &Mutation<'gc>, p: Gc<'gc, ()>) -> Index {
-        // Occupied slot refcount starts at 0. A refcount of 0 and a set ptr implies that there is
-        // *one* live reference.
+        // Occupied slot refcount starts at 0. A refcount of 0 and a set ptr implies
+        // that there is *one* live reference.
 
         if self.next_free != NULL_INDEX {
             let idx = self.next_free;
@@ -256,20 +259,12 @@ impl<'gc> Slots<'gc> {
                 }
                 Slot::Occupied { .. } => panic!("free slot linked list corrupted"),
             }
-            *slot = Slot::Occupied {
-                root: p,
-                ref_count: 0,
-            };
+            *slot = Slot::Occupied { root: p, ref_count: 0 };
             idx
         } else {
             let idx = self.slots.len();
-            self.slots.push(
-                mc,
-                Slot::Occupied {
-                    root: p,
-                    ref_count: 0,
-                },
-            );
+            self.slots
+                .push(mc, Slot::Occupied { root: p, ref_count: 0 });
 
             idx
         }
@@ -291,9 +286,7 @@ impl<'gc> Slots<'gc> {
         match slot {
             Slot::Occupied { ref_count, .. } => {
                 if *ref_count == 0 {
-                    *slot = Slot::Vacant {
-                        next_free: self.next_free,
-                    };
+                    *slot = Slot::Vacant { next_free: self.next_free };
                     self.next_free = idx;
                 } else {
                     *ref_count -= 1;

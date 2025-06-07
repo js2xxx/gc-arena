@@ -1,8 +1,7 @@
 use core::ptr;
 
-use crate::{Collect, Gc, Mutation};
-
 use super::Vec;
+use crate::{Collect, Gc, Mutation};
 
 pub(super) trait SpecFromElem<'gc>: Sized {
     fn from_elem(elem: Self, n: usize, mc: &Mutation<'gc>) -> Vec<'gc, Self>;

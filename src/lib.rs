@@ -32,7 +32,6 @@ pub use gc_arena_derive::__unelide_lifetimes;
 
 #[doc(hidden)]
 pub use self::{arena::__DynRootable, no_drop::__MustNotImplDrop};
-
 pub use self::{
     arena::{Arena, Rootable},
     collect::Collect,

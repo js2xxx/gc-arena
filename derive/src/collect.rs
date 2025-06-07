@@ -18,13 +18,14 @@ pub(crate) fn derive(s: synstructure::Structure) -> TokenStream {
         Ok(found)
     }
 
-    // Deriving `Collect` must be done with care, because an implementation of `Drop` is not
-    // necessarily safe for `Collect` types. This derive macro has three available modes to ensure
-    // that this is safe:
+    // Deriving `Collect` must be done with care, because an implementation of
+    // `Drop` is not necessarily safe for `Collect` types. This derive macro has
+    // three available modes to ensure that this is safe:
     //   1) Require that the type be 'static with `#[collect(static)]`.
     //   2) Prohibit a `Drop` impl on the type with `#[collect(no_drop)]`
-    //   3) Allow a custom `Drop` impl that might be unsafe with `#[collect(unsafe_drop)]`. Such
-    //      `Drop` impls must *not* access garbage collected pointers during `Drop::drop`.
+    //   3) Allow a custom `Drop` impl that might be unsafe with
+    //      `#[collect(unsafe_drop)]`. Such `Drop` impls must *not* access garbage
+    //      collected pointers during `Drop::drop`.
     #[derive(PartialEq)]
     enum Mode {
         RequireStatic,
@@ -119,9 +120,10 @@ pub(crate) fn derive(s: synstructure::Structure) -> TokenStream {
 
         // Ignore all bindings that have `#[collect(static)]` For each binding with
         // `#[collect(static)]`, we push a bound of the form `FieldType: 'static` to
-        // `static_bindings`, which will be added to the genererated `Collect` impl. The presence of
-        // the bound guarantees that the field cannot hold any `Gc` pointers, so it's safe to ignore
-        // that field in `needs_trace` and `trace`
+        // `static_bindings`, which will be added to the genererated `Collect` impl. The
+        // presence of the bound guarantees that the field cannot hold any `Gc`
+        // pointers, so it's safe to ignore that field in `needs_trace` and
+        // `trace`
         impl_struct.filter(|b| match find_collect_meta(&b.ast().attrs) {
             Ok(Some(attr)) => {
                 let mut static_binding = false;
@@ -148,8 +150,8 @@ pub(crate) fn derive(s: synstructure::Structure) -> TokenStream {
             impl_struct.add_where_predicate(syn::parse_quote! { #static_binding: 'static });
         }
 
-        // `#[collect(static)]` only makes sense on fields, not enum variants. Emit an error
-        // if it is used in the wrong place
+        // `#[collect(static)]` only makes sense on fields, not enum variants. Emit an
+        // error if it is used in the wrong place
         if let syn::Data::Enum(..) = impl_struct.ast().data {
             for v in impl_struct.variants() {
                 for attr in v.ast().attrs {
@@ -163,14 +165,14 @@ pub(crate) fn derive(s: synstructure::Structure) -> TokenStream {
             }
         }
 
-        // We've already called `impl_struct.filter`, so we we won't try to include `NEEDS_TRACE`
-        // for the types of fields that have `#[collect(static)]`
+        // We've already called `impl_struct.filter`, so we we won't try to include
+        // `NEEDS_TRACE` for the types of fields that have `#[collect(static)]`
         for v in impl_struct.variants() {
             for b in v.bindings() {
                 let ty = &b.ast().ty;
-                // Resolving the span at the call site makes rustc emit a 'the error originates a
-                // derive macro note' We only use this span on tokens that need to resolve to items
-                // (e.g. `gc_arena::Collect`), so this won't cause any hygiene issues
+                // Resolving the span at the call site makes rustc emit a 'the error originates
+                // a derive macro note' We only use this span on tokens that need to resolve to
+                // items (e.g. `gc_arena::Collect`), so this won't cause any hygiene issues
                 let call_span = b.ast().span().resolved_at(Span::call_site());
                 quote_spanned!(call_span=>
                     || <#ty as ::gc_arena::Collect>::NEEDS_TRACE
@@ -196,8 +198,8 @@ pub(crate) fn derive(s: synstructure::Structure) -> TokenStream {
             )
         });
 
-        // If we have no configured `'gc` lifetime and the type has a *single* generic lifetime, use
-        // that one.
+        // If we have no configured `'gc` lifetime and the type has a *single* generic
+        // lifetime, use that one.
         if gc_lifetime.is_none() {
             let mut all_lifetimes =
                 impl_struct

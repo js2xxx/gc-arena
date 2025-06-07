@@ -1,16 +1,18 @@
 //! Write barrier management.
 
-use core::mem;
-use core::ops::{Deref, DerefMut};
+use core::{
+    mem,
+    ops::{Deref, DerefMut},
+};
 
 #[cfg(doc)]
 use crate::Gc;
 
 /// An (interiorly-)mutable reference inside a GC'd object graph.
 ///
-/// This type can only exist behind a reference; it is typically obtained by calling
-/// [`Gc::write`] on a [`Gc`] pointer or by using the [`field!`] projection macro
-/// on a pre-existing `&Write<T>`.
+/// This type can only exist behind a reference; it is typically obtained by
+/// calling [`Gc::write`] on a [`Gc`] pointer or by using the [`field!`]
+/// projection macro on a pre-existing `&Write<T>`.
 #[non_exhaustive]
 #[repr(transparent)]
 pub struct Write<T: ?Sized> {
@@ -40,10 +42,12 @@ impl<T: ?Sized> Write<T> {
     /// Asserts that the given reference can be safely written to.
     ///
     /// # Safety
-    /// In order to maintain the invariants of the garbage collector, no new [`Gc`] pointers
-    /// may be adopted by the referenced value as a result of the interior mutability enabled
-    /// by this wrapper, unless [`Gc::write`] is invoked manually on the parent [`Gc`]
-    /// pointer during the current arena callback.
+    ///
+    /// In order to maintain the invariants of the garbage collector, no new
+    /// [`Gc`] pointers may be adopted by the referenced value as a result of
+    /// the interior mutability enabled by this wrapper, unless [`Gc::write`]
+    /// is invoked manually on the parent [`Gc`] pointer during the current
+    /// arena callback.
     #[inline(always)]
     pub unsafe fn assume(v: &T) -> &Self {
         // SAFETY: `Self` is `repr(transparent)`.
@@ -71,7 +75,8 @@ impl<T: ?Sized> Write<T> {
         unsafe { mem::transmute(v) }
     }
 
-    /// Implementation detail of `write_field!`; same safety requirements as `assume`.
+    /// Implementation detail of `write_field!`; same safety requirements as
+    /// `assume`.
     #[inline(always)]
     #[doc(hidden)]
     pub unsafe fn __from_ref_and_ptr(v: &T, _: *const T) -> &Self {
@@ -87,7 +92,8 @@ impl<T: ?Sized> Write<T> {
     where
         T: Unlock,
     {
-        // SAFETY: a `&Write<T>` implies that a write barrier was triggered on the parent `Gc`.
+        // SAFETY: a `&Write<T>` implies that a write barrier was triggered on the
+        // parent `Gc`.
         unsafe { self.__inner.unlock_unchecked() }
     }
 }
@@ -120,19 +126,23 @@ impl<T, E> Write<Result<T, E>> {
     }
 }
 
-/// Types that support additional operations (typically, mutation) when behind a write barrier.
+/// Types that support additional operations (typically, mutation) when behind a
+/// write barrier.
 pub trait Unlock {
-    /// This will typically be a cell-like type providing some sort of interior mutability.
+    /// This will typically be a cell-like type providing some sort of interior
+    /// mutability.
     type Unlocked: ?Sized;
 
-    /// Provides unsafe access to the unlocked type, *without* triggering a write barrier.
+    /// Provides unsafe access to the unlocked type, *without* triggering a
+    /// write barrier.
     ///
     /// # Safety
     ///
-    /// In order to maintain the invariants of the garbage collector, no new `Gc` pointers
-    /// may be adopted by as a result of the interior mutability afforded by the unlocked value,
-    /// unless the write barrier for the containing `Gc` pointer is invoked manually before
-    /// collection is triggered.
+    /// In order to maintain the invariants of the garbage collector, no new
+    /// `Gc` pointers may be adopted by as a result of the interior mutability
+    /// afforded by the unlocked value, unless the write barrier for the
+    /// containing `Gc` pointer is invoked manually before collection is
+    /// triggered.
     unsafe fn unlock_unchecked(&self) -> &Self::Unlocked;
 }
 
@@ -153,7 +163,8 @@ pub trait Unlock {
 ///
 /// # Limitations
 ///
-/// This macro only support structs with named fields; tuples and enums aren't supported.
+/// This macro only support structs with named fields; tuples and enums aren't
+/// supported.
 #[doc(inline)]
 pub use crate::__field as field;
 
@@ -163,16 +174,17 @@ pub use crate::__field as field;
 macro_rules! __field {
     ($value:expr, $type:path, $field:ident) => {
         // SAFETY:
-        // For this to be sound, we need to prevent deref coercions from happening, as they may
-        // access nested `Gc` pointers, which would violate the write barrier invariant. This is
-        // guaranteed as follows:
-        // - the destructuring pattern, unlike a simple field access, cannot call `Deref`;
-        // - similarly, the `__from_ref_and_ptr` method takes both a reference (for the lifetime)
-        //   and a pointer, causing a compilation failure if the first argument was coerced.
+        // For this to be sound, we need to prevent deref coercions from happening, as
+        // they may access nested `Gc` pointers, which would violate the write
+        // barrier invariant. This is guaranteed as follows:
+        // - the destructuring pattern, unlike a simple field access, cannot call
+        //   `Deref`;
+        // - similarly, the `__from_ref_and_ptr` method takes both a reference (for the
+        //   lifetime) and a pointer, causing a compilation failure if the first
+        //   argument was coerced.
         match $value {
             $crate::barrier::Write {
-                __inner: $type { $field, .. },
-                ..
+                __inner: $type { $field, .. }, ..
             } => unsafe { $crate::barrier::Write::__from_ref_and_ptr($field, $field as *const _) },
         }
     };

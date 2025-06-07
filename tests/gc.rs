@@ -3,14 +3,14 @@
 
 use core::{cell::Cell, mem};
 #[cfg(feature = "std")]
-use rand::distributions::Distribution;
-#[cfg(feature = "std")]
 use std::{collections::HashMap, rc::Rc};
 
 use gc_arena::{
     Arena, Collect, DynamicRootSet, Gc, Lock, RefLock, Rootable, arena::CollectionPhase, gc::Weak,
     metrics::Pacing, static_collect,
 };
+#[cfg(feature = "std")]
+use rand::distributions::Distribution;
 
 #[test]
 fn simple_allocation() {
@@ -19,9 +19,7 @@ fn simple_allocation() {
         test: Gc<'gc, i32>,
     }
 
-    let arena = Arena::<Rootable![TestRoot<'_>]>::new(|mc| TestRoot {
-        test: Gc::new(mc, 42),
-    });
+    let arena = Arena::<Rootable![TestRoot<'_>]>::new(|mc| TestRoot { test: Gc::new(mc, 42) });
 
     arena.mutate(|_mc, root| {
         assert_eq!(*(root.test), 42);
@@ -226,7 +224,7 @@ fn test_layouts() {
     }
 
     macro_rules! test_layout {
-        (size=$size:literal, align=$align:literal) => {{
+        (size = $size:literal,align = $align:literal) => {{
             #[repr(align($align))]
             struct Aligned([u8; $size]);
 
@@ -387,10 +385,7 @@ fn test_map() {
     let arena = arena
         .try_map_root::<Rootable![Intermediate<'_>], ()>(|_, intermediate| {
             let state = intermediate.root.some_complex_state[1];
-            Ok(Intermediate {
-                root: intermediate.root,
-                state,
-            })
+            Ok(Intermediate { root: intermediate.root, state })
         })
         .unwrap();
 
@@ -504,9 +499,8 @@ fn test_collection_bounded() {
         test: Gc<'gc, [u8; 256]>,
     }
 
-    let mut arena = Arena::<Rootable![TestRoot<'_>]>::new(|mc| TestRoot {
-        test: Gc::new(mc, [0; 256]),
-    });
+    let mut arena =
+        Arena::<Rootable![TestRoot<'_>]>::new(|mc| TestRoot { test: Gc::new(mc, [0; 256]) });
 
     arena.metrics().set_pacing(Pacing {
         sleep_factor: 1.0,
@@ -558,13 +552,10 @@ fn cast() {
     }
 
     gc_arena::arena::rootless_mutate(|mc| {
-        let a = Gc::new(
-            mc,
-            A {
-                header: Cell::new(0b01010101),
-                footer: 0b10101010,
-            },
-        );
+        let a = Gc::new(mc, A {
+            header: Cell::new(0b01010101),
+            footer: 0b10101010,
+        });
 
         unsafe {
             let b = Gc::cast::<B, ()>(a);
@@ -623,14 +614,11 @@ fn okay_panic() {
     }
 
     let mut arena = Arena::<Rootable![Gc<'_, Test<'_>>]>::new(|mc| {
-        Gc::new(
-            mc,
-            Test {
-                data: Gc::new(mc, [5; 256]),
-                panic_count: Cell::new(5),
-                trace_finished: Cell::new(false),
-            },
-        )
+        Gc::new(mc, Test {
+            data: Gc::new(mc, [5; 256]),
+            panic_count: Cell::new(5),
+            trace_finished: Cell::new(false),
+        })
     });
 
     for _ in 0..10 {
@@ -665,15 +653,10 @@ fn field_locks() {
     }
 
     let arena = Arena::<Rootable![Gc<'_, Test<'_>>]>::new(|mc| {
-        Gc::new(
-            mc,
-            Test {
-                foo: RefLock::new(Gc::new(mc, 10)),
-                nested: Nested {
-                    bar: Lock::new(None),
-                },
-            },
-        )
+        Gc::new(mc, Test {
+            foo: RefLock::new(Gc::new(mc, 10)),
+            nested: Nested { bar: Lock::new(None) },
+        })
     });
 
     arena.mutate(|mc, root| {
@@ -696,9 +679,8 @@ fn gc_sleep_actually_sleeps() {
         test: Gc<'gc, [u8; 256]>,
     }
 
-    let mut arena = Arena::<Rootable![TestRoot<'_>]>::new(|mc| TestRoot {
-        test: Gc::new(mc, [0; 256]),
-    });
+    let mut arena =
+        Arena::<Rootable![TestRoot<'_>]>::new(|mc| TestRoot { test: Gc::new(mc, [0; 256]) });
 
     arena.metrics().set_pacing(Pacing {
         sleep_factor: 1.0,
@@ -706,9 +688,9 @@ fn gc_sleep_actually_sleeps() {
         ..Default::default()
     });
 
-    // Finish the current collection cycle so that the new min_sleep is used. We should be asleep
-    // for exactly min_sleep, since the sleep factor is 1.0 and 2x 256 bytes is 512 which is less
-    // than 1024.
+    // Finish the current collection cycle so that the new min_sleep is used. We
+    // should be asleep for exactly min_sleep, since the sleep factor is 1.0 and
+    // 2x 256 bytes is 512 which is less than 1024.
     arena.finish_cycle();
 
     // We should be asleep, aka the debt should be zero.
@@ -720,8 +702,8 @@ fn gc_sleep_actually_sleeps() {
         });
     }
 
-    // We should still be asleep after allocating 800 bytes (assumes that the overhead is less than
-    // 224 bytes).
+    // We should still be asleep after allocating 800 bytes (assumes that the
+    // overhead is less than 224 bytes).
     assert_eq!(arena.metrics().allocation_debt(), 0.0);
 
     for _ in 0..3 {
@@ -730,7 +712,8 @@ fn gc_sleep_actually_sleeps() {
         });
     }
 
-    // We should *not* be asleep after allocating 300 more bytes, because this is greater than 1024.
+    // We should *not* be asleep after allocating 300 more bytes, because this is
+    // greater than 1024.
     assert!(arena.metrics().allocation_debt() > 0.0);
 }
 
@@ -741,9 +724,8 @@ fn gc_external_allocation_affects_timing() {
         test: Gc<'gc, [u8; 256]>,
     }
 
-    let mut arena = Arena::<Rootable![TestRoot<'_>]>::new(|mc| TestRoot {
-        test: Gc::new(mc, [0; 256]),
-    });
+    let mut arena =
+        Arena::<Rootable![TestRoot<'_>]>::new(|mc| TestRoot { test: Gc::new(mc, [0; 256]) });
 
     arena.metrics().set_pacing(Pacing {
         sleep_factor: 1.0,
@@ -751,9 +733,9 @@ fn gc_external_allocation_affects_timing() {
         ..Default::default()
     });
 
-    // Finish the current collection cycle so that the new min_sleep is used. We should be asleep
-    // for exactly min_sleep, since the sleep factor is 1.0 and 2x 256 bytes is 512 which is less
-    // than 1024.
+    // Finish the current collection cycle so that the new min_sleep is used. We
+    // should be asleep for exactly min_sleep, since the sleep factor is 1.0 and
+    // 2x 256 bytes is 512 which is less than 1024.
     arena.finish_cycle();
 
     // We should be asleep, aka the debt should be zero.
@@ -772,7 +754,8 @@ fn gc_external_allocation_affects_timing() {
 
     let debt_high_mark = arena.metrics().allocation_debt();
 
-    // We should *not* be asleep after allocating 300 more bytes, because this is greater than 1024.
+    // We should *not* be asleep after allocating 300 more bytes, because this is
+    // greater than 1024.
     assert!(debt_high_mark > 0.0);
 
     // Free all of the external data we just pretended to allocate
@@ -799,9 +782,9 @@ fn stop_the_world_works() {
         ..Pacing::STOP_THE_WORLD
     });
 
-    // Finish the current collection cycle so that the new min_sleep is used. We should be asleep
-    // for exactly min_sleep, since the sleep factor is 1.5 and 1.5x 256 bytes is 384 which is less
-    // than 1024.
+    // Finish the current collection cycle so that the new min_sleep is used. We
+    // should be asleep for exactly min_sleep, since the sleep factor is 1.5 and
+    // 1.5x 256 bytes is 384 which is less than 1024.
     arena.finish_cycle();
 
     // We should be asleep, aka the debt should be zero.
@@ -813,8 +796,8 @@ fn stop_the_world_works() {
         });
     }
 
-    // We should still be asleep after allocating 800 bytes (assumes that the overhead is less than
-    // 224 bytes).
+    // We should still be asleep after allocating 800 bytes (assumes that the
+    // overhead is less than 224 bytes).
     assert_eq!(arena.metrics().allocation_debt(), 0.0);
 
     for _ in 0..3 {
@@ -823,7 +806,8 @@ fn stop_the_world_works() {
         });
     }
 
-    // Our debt should now be positive, since we've definitely allocated more than 1024 bytes.
+    // Our debt should now be positive, since we've definitely allocated more than
+    // 1024 bytes.
     assert!(arena.metrics().allocation_debt() > 0.0);
 
     // This should do a full collection.
@@ -832,9 +816,9 @@ fn stop_the_world_works() {
     // And we should be back asleep.
     assert_eq!(arena.collection_phase(), CollectionPhase::Sleeping);
 
-    // The total remembered allocations after the last full collection were at least 1100 bytes,
-    // so allocating 1200 bytes (which is less than 1100 * 1.5 plus overhead) should not wake the
-    // collector.
+    // The total remembered allocations after the last full collection were at least
+    // 1100 bytes, so allocating 1200 bytes (which is less than 1100 * 1.5 plus
+    // overhead) should not wake the collector.
     for _ in 0..12 {
         arena.mutate(|mc, _| {
             Gc::new(mc, [0u8; 100]);
@@ -975,13 +959,15 @@ fn test_phases() {
 
     assert_eq!(arena.collection_phase(), CollectionPhase::Sweeping);
 
-    // Assert that mark_debt() and finish_marking() do nothing while in the Sweeping phase.
+    // Assert that mark_debt() and finish_marking() do nothing while in the Sweeping
+    // phase.
     assert!(arena.mark_debt().is_none());
     assert!(arena.finish_marking().is_none());
 
     assert_eq!(arena.collection_phase(), CollectionPhase::Sweeping);
 
-    // This should not move from Sweeping to Marking in one call, it must pass through Sleeping.
+    // This should not move from Sweeping to Marking in one call, it must pass
+    // through Sleeping.
     arena.finish_cycle();
 
     // We must end back up at Sleeping.
@@ -1028,7 +1014,8 @@ fn barriers() {
         root.node.strong_child.set(Some(p));
     });
 
-    // Finish collection, if the barrier didn't work this would delete the allocated pointer.
+    // Finish collection, if the barrier didn't work this would delete the allocated
+    // pointer.
     arena.finish_cycle();
 
     arena.mutate(|_, root| {
@@ -1045,7 +1032,8 @@ fn barriers() {
         root.node.weak_child.set(Some(w));
     });
 
-    // Finish collection, if the barrier didn't work this would delete the allocated pointer.
+    // Finish collection, if the barrier didn't work this would delete the allocated
+    // pointer.
     arena.finish_cycle();
 
     arena.mutate(|_, root| {
@@ -1068,7 +1056,8 @@ fn barriers() {
         root.node.strong_child.set(Some(p));
     });
 
-    // Finish collection, if the barrier didn't work this would delete the allocated pointer.
+    // Finish collection, if the barrier didn't work this would delete the allocated
+    // pointer.
     arena.finish_cycle();
 
     arena.mutate(|_, root| {
@@ -1085,7 +1074,8 @@ fn barriers() {
         root.node.weak_child.set(Some(w));
     });
 
-    // Finish collection, if the barrier didn't work this would delete the allocated pointer.
+    // Finish collection, if the barrier didn't work this would delete the allocated
+    // pointer.
     arena.finish_cycle();
 
     arena.mutate(|_, root| {

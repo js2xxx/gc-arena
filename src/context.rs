@@ -15,8 +15,10 @@ use crate::{
     types::{GcBox, GcBoxHeader, GcColor, Invariant},
 };
 
-/// Handle value given by arena callbacks during construction and mutation. Allows allocating new
-/// `Gc` pointers and internally mutating values held by `Gc` pointers.
+/// Handle value given by arena callbacks during construction and mutation.
+///
+/// Allows allocating new `Gc` pointers and internally mutating values held by
+/// `Gc` pointers.
 pub struct Mutation<'gc> {
     context: &'gc Context,
     alloc: &'gc dyn Allocator,
@@ -29,17 +31,20 @@ impl<'gc> Mutation<'gc> {
         self.context.metrics()
     }
 
-    /// IF we are in the marking phase AND the `parent` pointer is colored black AND the `child` (if
-    /// given) is colored white, then change the `parent` color to gray and enqueue it for tracing.
+    /// IF we are in the marking phase AND the `parent` pointer is colored black
+    /// AND the `child` (if given) is colored white, then change the `parent`
+    /// color to gray and enqueue it for tracing.
     ///
-    /// This operation is known as a "backwards write barrier". Calling this method is one of the
-    /// safe ways for the value in the `parent` pointer to use internal mutability to adopt the
-    /// `child` pointer without invalidating the color invariant.
+    /// This operation is known as a "backwards write barrier". Calling this
+    /// method is one of the safe ways for the value in the `parent` pointer
+    /// to use internal mutability to adopt the `child` pointer without
+    /// invalidating the color invariant.
     ///
-    /// If the `child` parameter is given, then calling this method ensures that the `parent`
-    /// pointer may safely adopt the `child` pointer. If no `child` is given, then calling this
-    /// method is more general, and it ensures that the `parent` pointer may adopt *any* child
-    /// pointer(s) before collection is next triggered.
+    /// If the `child` parameter is given, then calling this method ensures that
+    /// the `parent` pointer may safely adopt the `child` pointer. If no `child`
+    /// is given, then calling this method is more general, and it ensures that
+    /// the `parent` pointer may adopt *any* child pointer(s) before collection
+    /// is next triggered.
     #[inline]
     pub fn backward_barrier<T, U, M, N>(&self, parent: Gc<'gc, T, M>, child: Option<Gc<'gc, U, N>>)
     where
@@ -52,7 +57,8 @@ impl<'gc> Mutation<'gc> {
             .backward_barrier(parent.ptr, child.map(|p| p.ptr))
     }
 
-    /// A version of [`Mutation::backward_barrier`] that allows adopting a [`Weak`] child.
+    /// A version of [`Mutation::backward_barrier`] that allows adopting a
+    /// [`Weak`] child.
     #[inline]
     pub fn backward_barrier_weak<T, U, M, N>(&self, parent: Gc<'gc, T, M>, child: Weak<'gc, U, N>)
     where
@@ -65,17 +71,19 @@ impl<'gc> Mutation<'gc> {
             .backward_barrier_weak(parent.ptr, child.inner.ptr)
     }
 
-    /// IF we are in the marking phase AND the `parent` pointer (if given) is colored black, AND
-    /// the `child` is colored white, then immediately change the `child` to gray and enqueue it
-    /// for tracing.
+    /// IF we are in the marking phase AND the `parent` pointer (if given) is
+    /// colored black, AND the `child` is colored white, then immediately
+    /// change the `child` to gray and enqueue it for tracing.
     ///
-    /// This operation is known as a "forwards write barrier". Calling this method is one of the
-    /// safe ways for the value in the `parent` pointer to use internal mutability to adopt the
-    /// `child` pointer without invalidating the color invariant.
+    /// This operation is known as a "forwards write barrier". Calling this
+    /// method is one of the safe ways for the value in the `parent` pointer
+    /// to use internal mutability to adopt the `child` pointer without
+    /// invalidating the color invariant.
     ///
-    /// If the `parent` parameter is given, then calling this method ensures that the `parent`
-    /// pointer may safely adopt the `child` pointer. If no `parent` is given, then calling this
-    /// method is more general, and it ensures that the `child` pointer may be adopted by *any*
+    /// If the `parent` parameter is given, then calling this method ensures
+    /// that the `parent` pointer may safely adopt the `child` pointer. If
+    /// no `parent` is given, then calling this method is more general, and
+    /// it ensures that the `child` pointer may be adopted by *any*
     /// parent pointer(s) before collection is next triggered.
     #[inline]
     pub fn forward_barrier<T, U, M, N>(&self, parent: Option<Gc<'gc, T, M>>, child: Gc<'gc, U, N>)
@@ -89,7 +97,8 @@ impl<'gc> Mutation<'gc> {
             .forward_barrier(parent.map(|p| p.ptr), child.ptr)
     }
 
-    /// A version of [`Mutation::forward_barrier`] that allows adopting a [`Weak`] child.
+    /// A version of [`Mutation::forward_barrier`] that allows adopting a
+    /// [`Weak`] child.
     #[inline]
     pub fn forward_barrier_weak<T, U, M, N>(
         &self,
@@ -122,8 +131,8 @@ impl<'gc> Mutation<'gc> {
 
 /// Handle value given to finalization callbacks in `MarkedArena`.
 ///
-/// Derefs to `Mutation<'gc>` to allow for arbitrary mutation, but adds additional powers to examine
-/// the state of the fully marked arena.
+/// Derefs to `Mutation<'gc>` to allow for arbitrary mutation, but adds
+/// additional powers to examine the state of the fully marked arena.
 pub struct Finalization<'gc>(Mutation<'gc>);
 
 impl<'gc> Deref for Finalization<'gc> {
@@ -180,8 +189,8 @@ pub(crate) enum Stop {
     // Stop once we reach the end of the current cycle and are in `Phase::Sleep`.
     FinishCycle,
     // Stop once we have done an entire cycle as a single atomic unit. This is the maximum amount
-    // of work that a call to `Context::do_collection` will do, since a full collection as a single
-    // atomic unit means that all unreachable values *must* already be freed.
+    // of work that a call to `Context::do_collection` will do, since a full collection as a
+    // single atomic unit means that all unreachable values *must* already be freed.
     Full,
 }
 
@@ -305,14 +314,15 @@ impl Context {
         self.gray.get().is_some() || self.gray_again.get().is_some() || self.root_needs_trace
     }
 
-    // Do some collection work until either we have achieved our `target` (paying off debt or
-    // finishing a full collection) or we have reached the `stop` condition.
+    // Do some collection work until either we have achieved our `target` (paying
+    // off debt or finishing a full collection) or we have reached the `stop`
+    // condition.
     //
-    // In order for this to be safe, at the time of call no `Gc` pointers can be live that are not
-    // reachable from the given root object.
+    // In order for this to be safe, at the time of call no `Gc` pointers can be
+    // live that are not reachable from the given root object.
     //
-    // If we are currently in `Phase::Sleep` and have positive debt, this will immediately
-    // transition the collector to `Phase::Mark`.
+    // If we are currently in `Phase::Sleep` and have positive debt, this will
+    // immediately transition the collector to `Phase::Mark`.
     #[deny(unsafe_op_in_unsafe_fn)]
     pub(crate) unsafe fn do_collection<'gc, R: Collect<'gc> + ?Sized>(
         &mut self,
@@ -441,21 +451,23 @@ impl Context {
 
     #[inline]
     fn backward_barrier(&self, parent: GcBox, child: Option<GcBox>) {
-        // During the marking phase, if we are mutating a black object, we may add a white object to
-        // it and invalidate the invariant that black objects may not point to white objects. Turn
-        // the black parent object gray to prevent this.
+        // During the marking phase, if we are mutating a black object, we may add a
+        // white object to it and invalidate the invariant that black objects
+        // may not point to white objects. Turn the black parent object gray to
+        // prevent this.
         //
-        // NOTE: This also adds the pointer to the gray_again queue even if `header.needs_trace()`
-        // is false, but this is not harmful (just wasteful). There's no reason to call a barrier on
-        // a pointer that can't adopt other pointers, so we skip the check.
+        // NOTE: This also adds the pointer to the gray_again queue even if
+        // `header.needs_trace()` is false, but this is not harmful (just
+        // wasteful). There's no reason to call a barrier on a pointer that
+        // can't adopt other pointers, so we skip the check.
         if self.phase == Phase::Mark
             && parent.header().color() == GcColor::Black
             && child
                 .map(|c| matches!(c.header().color(), GcColor::White | GcColor::WhiteWeak))
                 .unwrap_or(true)
         {
-            // Outline the actual barrier code (which is somewhat expensive and won't be executed
-            // often) to promote the inlining of the write barrier.
+            // Outline the actual barrier code (which is somewhat expensive and won't be
+            // executed often) to promote the inlining of the write barrier.
             #[cold]
             fn barrier(this: &Context, parent: GcBox) {
                 this.make_gray_again(parent);
@@ -470,8 +482,8 @@ impl Context {
             && parent.header().color() == GcColor::Black
             && child.header().color() == GcColor::White
         {
-            // Outline the actual barrier code (which is somewhat expensive and won't be executed
-            // often) to promote the inlining of the write barrier.
+            // Outline the actual barrier code (which is somewhat expensive and won't be
+            // executed often) to promote the inlining of the write barrier.
             #[cold]
             fn barrier(this: &Context, parent: GcBox) {
                 this.make_gray_again(parent);
@@ -482,16 +494,17 @@ impl Context {
 
     #[inline]
     fn forward_barrier(&self, parent: Option<GcBox>, child: GcBox) {
-        // During the marking phase, if we are mutating a black object, we may add a white object
-        // to it and invalidate the invariant that black objects may not point to white objects.
-        // Immediately trace the child white object to turn it gray (or black) to prevent this.
+        // During the marking phase, if we are mutating a black object, we may add a
+        // white object to it and invalidate the invariant that black objects
+        // may not point to white objects. Immediately trace the child white
+        // object to turn it gray (or black) to prevent this.
         if self.phase == Phase::Mark
             && parent
                 .map(|p| p.header().color() == GcColor::Black)
                 .unwrap_or(true)
         {
-            // Outline the actual barrier code (which is somewhat expensive and won't be executed
-            // often) to promote the inlining of the write barrier.
+            // Outline the actual barrier code (which is somewhat expensive and won't be
+            // executed often) to promote the inlining of the write barrier.
             #[cold]
             fn barrier(this: &Context, child: GcBox) {
                 this.trace(child);
@@ -502,16 +515,17 @@ impl Context {
 
     #[inline]
     fn forward_barrier_weak(&self, parent: Option<GcBox>, child: GcBox) {
-        // During the marking phase, if we are mutating a black object, we may add a white object
-        // to it and invalidate the invariant that black objects may not point to white objects.
-        // Immediately trace the child white object to turn it gray (or black) to prevent this.
+        // During the marking phase, if we are mutating a black object, we may add a
+        // white object to it and invalidate the invariant that black objects
+        // may not point to white objects. Immediately trace the child white
+        // object to turn it gray (or black) to prevent this.
         if self.phase == Phase::Mark
             && parent
                 .map(|p| p.header().color() == GcColor::Black)
                 .unwrap_or(true)
         {
-            // Outline the actual barrier code (which is somewhat expensive and won't be executed
-            // often) to promote the inlining of the write barrier.
+            // Outline the actual barrier code (which is somewhat expensive and won't be
+            // executed often) to promote the inlining of the write barrier.
             #[cold]
             fn barrier(this: &Context, child: GcBox) {
                 this.trace_weak(child);
@@ -557,7 +571,8 @@ impl Context {
     }
 
     /// Determines whether or not a Gc pointer is safe to be upgraded.
-    /// This is used by weak pointers to determine if it can safely upgrade to a strong pointer.
+    /// This is used by weak pointers to determine if it can safely upgrade to a
+    /// strong pointer.
     #[inline]
     fn upgrade(&self, gc_box: GcBox) -> bool {
         let header = gc_box.header();
@@ -568,36 +583,38 @@ impl Context {
         }
 
         // Consider the different possible phases of the GC:
-        // * In `Phase::Sleep`, the GC is not running, so we can upgrade.
-        //   If the newly-created `Gc` or `GcCell` survives the current `arena.mutate`
-        //   call, then the situtation is equivalent to having copied an existing `Gc`/`GcCell`,
-        //   or having created a new allocation.
+        // * In `Phase::Sleep`, the GC is not running, so we can upgrade. If the
+        //   newly-created `Gc` or `GcCell` survives the current `arena.mutate` call,
+        //   then the situtation is equivalent to having copied an existing
+        //   `Gc`/`GcCell`, or having created a new allocation.
         //
-        // * In `Phase::Mark`:
-        //   If the newly-created `Gc` or `GcCell` survives the current `arena.mutate`
-        //   call, then it must have been stored somewhere, triggering a write barrier.
-        //   This will ensure that the new `Gc`/`GcCell` gets traced (if it's now reachable)
-        //   before we transition to `Phase::Sweep`.
+        // * In `Phase::Mark`: If the newly-created `Gc` or `GcCell` survives the
+        //   current `arena.mutate` call, then it must have been stored somewhere,
+        //   triggering a write barrier. This will ensure that the new `Gc`/`GcCell`
+        //   gets traced (if it's now reachable) before we transition to `Phase::Sweep`.
         //
-        // * In `Phase::Sweep`:
-        //   If the allocation is `WhiteWeak`, then it's impossible for it to have been freshly-
-        //   created during this `Phase::Sweep`. `WhiteWeak` is only  set when a white `Weak/
-        //   WeakCell` is traced. A `Weak/WeakCell` must be created from an existing `Gc/
-        //   GcCell` via `downgrade()`, so `WhiteWeak` means that a `Weak` / `WeakCell` existed
+        // * In `Phase::Sweep`: If the allocation is `WhiteWeak`, then it's impossible
+        //   for it to have been freshly- created during this `Phase::Sweep`.
+        //   `WhiteWeak` is only  set when a white `Weak/ WeakCell` is traced. A
+        //   `Weak/WeakCell` must be created from an existing `Gc/ GcCell` via
+        //   `downgrade()`, so `WhiteWeak` means that a `Weak` / `WeakCell` existed
         //   during the last `Phase::Mark.`
         //
         //   Therefore, a `WhiteWeak` object is guaranteed to be deallocated during this
         //   `Phase::Sweep`, and we must not upgrade it.
         //
-        //   Conversely, it's always safe to upgrade a white object that is not `WhiteWeak`.
-        //   In order to call `upgrade`, you must have a `Weak/WeakCell`. Since it is
-        //   not `WhiteWeak` there cannot have been any `Weak/WeakCell`s during the
-        //   last `Phase::Mark`, so the weak pointer must have been created during this
-        //   `Phase::Sweep`. This is only possible if the underlying allocation was freshly-created
-        //   - if the allocation existed during `Phase::Mark` but was not traced, then it
-        //   must have been unreachable, which means that the user wouldn't have been able to call
-        //   `downgrade`. Therefore, we can safely upgrade, knowing that the object will not be
-        //   freed during this phase, despite being white.
+        //   Conversely, it's always safe to upgrade a white object that is not
+        // `WhiteWeak`.   In order to call `upgrade`, you must have a
+        // `Weak/WeakCell`. Since it is   not `WhiteWeak` there cannot have been
+        // any `Weak/WeakCell`s during the   last `Phase::Mark`, so the weak
+        // pointer must have been created during this   `Phase::Sweep`. This is
+        // only possible if the underlying allocation was freshly-created
+        //   - if the allocation existed during `Phase::Mark` but was not traced, then
+        //     it
+        //   must have been unreachable, which means that the user wouldn't have been
+        // able to call   `downgrade`. Therefore, we can safely upgrade, knowing
+        // that the object will not be   freed during this phase, despite being
+        // white.
         if self.phase == Phase::Sweep && header.color() == GcColor::WhiteWeak {
             return false;
         }
@@ -622,9 +639,9 @@ impl Context {
     }
 
     fn mark_one<'gc, R: Collect<'gc> + ?Sized>(&mut self, root: &R) -> ControlFlow<()> {
-        // We look for an object first in the normal gray queue, then the "gray again" queue.
-        // Processing "gray again" objects later gives them more time to be mutated again without
-        // triggering another write barrier.
+        // We look for an object first in the normal gray queue, then the "gray again"
+        // queue. Processing "gray again" objects later gives them more time to
+        // be mutated again without triggering another write barrier.
         let pop = |list: &Cell<Option<GcBox>>| {
             list.get().inspect(|gc_box| {
                 list.set(gc_box.header().gray_next());
@@ -634,21 +651,25 @@ impl Context {
         let next_gray = pop(&self.gray).or_else(|| pop(&self.gray_again));
 
         if let Some(gc_box) = next_gray {
-            // We always mark work for objects processed from both the gray and "gray again" queue.
-            // When objects are placed into the "gray again" queue due to a write barrier, the
-            // original work is *undone*, so we do it again here.
+            // We always mark work for objects processed from both the gray and "gray again"
+            // queue. When objects are placed into the "gray again" queue due to
+            // a write barrier, the original work is *undone*, so we do it again
+            // here.
             self.metrics.mark_gc_traced(gc_box.size_of_box());
             gc_box.header().set_color(GcColor::Black);
 
-            // If we have an object in the gray queue, take one, trace it, and turn it black.
+            // If we have an object in the gray queue, take one, trace it, and turn it
+            // black.
 
-            // Our `Collect::trace` call may panic, and if it does the object will be lost from
-            // the gray queue but potentially incompletely traced. By catching a panic during
-            // `Arena::collect()`, this could lead to memory unsafety.
+            // Our `Collect::trace` call may panic, and if it does the object will be lost
+            // from the gray queue but potentially incompletely traced. By
+            // catching a panic during `Arena::collect()`, this could lead to
+            // memory unsafety.
             //
-            // So, if the `Collect::trace` call panics, we need to add the popped object back to the
-            // `gray_again` queue. If the panic is caught, this will maybe give some time for its
-            // trace method to not panic before attempting to collect it again.
+            // So, if the `Collect::trace` call panics, we need to add the popped object
+            // back to the `gray_again` queue. If the panic is caught, this will
+            // maybe give some time for its trace method to not panic before
+            // attempting to collect it again.
             struct DropGuard<'a> {
                 context: &'a mut Context,
                 gc_box: GcBox,
@@ -660,18 +681,16 @@ impl Context {
                 }
             }
 
-            let guard = DropGuard {
-                context: self,
-                gc_box,
-            };
+            let guard = DropGuard { context: self, gc_box };
             debug_assert!(gc_box.header().is_live());
             unsafe { gc_box.trace_value(guard.context) }
             mem::forget(guard);
 
             ControlFlow::Continue(())
         } else if self.root_needs_trace {
-            // We treat the root object as gray if `root_needs_trace` is set, and we process it at
-            // the end of the gray queue for the same reason as the "gray again" objects.
+            // We treat the root object as gray if `root_needs_trace` is set, and we process
+            // it at the end of the gray queue for the same reason as the "gray
+            // again" objects.
             root.trace(self);
             self.root_needs_trace = false;
             ControlFlow::Continue(())
@@ -705,9 +724,9 @@ impl Context {
                     self.all.set(next_box);
                 }
 
-                // SAFETY: this object is white, and wasn't traced by a `Weak` during this cycle,
-                // meaning it cannot have either strong or weak pointers, so we can drop the whole
-                // object.
+                // SAFETY: this object is white, and wasn't traced by a `Weak` during this
+                // cycle, meaning it cannot have either strong or weak pointers,
+                // so we can drop the whole object.
                 unsafe {
                     if sweep_header.is_live() {
                         // If the alive flag is set, that means we haven't dropped the inner value

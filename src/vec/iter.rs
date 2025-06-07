@@ -6,9 +6,8 @@ use core::{
     slice,
 };
 
-use crate::{Collect, Mutation, collect::Trace, gc::Unique};
-
 use super::{SpecExtend, Vec};
+use crate::{Collect, Mutation, collect::Trace, gc::Unique};
 
 pub struct IntoIter<'gc, T: 'gc> {
     buf: Unique<'gc, [MaybeUninit<T>]>,
@@ -32,8 +31,8 @@ unsafe impl<'gc, T: Collect<'gc> + 'gc> Collect<'gc> for IntoIter<'gc, T> {
 impl<'gc, T: 'gc + Collect<'gc>> IntoIter<'gc, T> {
     /// Collects the remaining items of this iterator into a `Vec`.
     ///
-    /// This method is provided because the generic [`Vec::collect`] cannot specialize on the
-    /// type of this iterator (which is branded by `'gc`).
+    /// This method is provided because the generic [`Vec::collect`] cannot
+    /// specialize on the type of this iterator (which is branded by `'gc`).
     ///
     /// # Examples
     ///
@@ -48,13 +47,14 @@ impl<'gc, T: 'gc + Collect<'gc>> IntoIter<'gc, T> {
     /// # });
     pub fn into_vec(self, mc: &Mutation<'gc>) -> Vec<'gc, T> {
         // A common case is passing a vector into a function which immediately
-        // re-collects into a vector. We can short circuit this if the IntoIter
-        // has not been advanced at all.
-        // When it has been advanced We can also reuse the memory and move the data to the front.
-        // But we only do so when the resulting Vec wouldn't have more unused capacity
-        // than creating it through the generic FromIterator implementation would. That limitation
-        // is not strictly necessary as Vec's allocation behavior is intentionally unspecified.
-        // But it is a conservative choice.
+        // re-collects into a vector. We can short circuit this if the IntoIter has not
+        // been advanced at all.
+        //
+        // When it has been advanced We can also reuse the memory and move the data to
+        // the front. But we only do so when the resulting Vec wouldn't have more unused
+        // capacity than creating it through the generic FromIterator implementation
+        // would. That limitation is not strictly necessary as Vec's allocation behavior
+        // is intentionally unspecified. But it is a conservative choice.
         if self.len() >= self.capacity() / 2 {
             let this = ManuallyDrop::new(self);
             // SAFETY: `self.start` and `self.end` are valid
@@ -134,8 +134,8 @@ impl<'gc, T: 'gc> Iterator for IntoIter<'gc, T> {
             if self.start == self.end {
                 return None;
             }
-            // `ptr` has to stay where it is to remain aligned, so we reduce the length by 1 by
-            // reducing the `end`.
+            // `ptr` has to stay where it is to remain aligned, so we reduce the length by 1
+            // by reducing the `end`.
             self.end = unsafe { self.end.byte_sub(1) };
             self.start
         } else {
@@ -175,8 +175,8 @@ impl<'gc, T: 'gc> DoubleEndedIterator for IntoIter<'gc, T> {
             if self.start == self.end {
                 return None;
             }
-            // `ptr` has to stay where it is to remain aligned, so we reduce the length by 1 by
-            // reducing the `end`.
+            // `ptr` has to stay where it is to remain aligned, so we reduce the length by 1
+            // by reducing the `end`.
             self.end = unsafe { self.end.byte_sub(1) };
             self.start
         } else {

@@ -1,12 +1,13 @@
-use crate::Rootable;
-use crate::collect::Collect;
+use core::{
+    borrow::{Borrow, BorrowMut},
+    convert::{AsMut, AsRef},
+    ops::{Deref, DerefMut},
+};
 
-use core::borrow::{Borrow, BorrowMut};
-use core::convert::{AsMut, AsRef};
-use core::ops::{Deref, DerefMut};
+use crate::{Rootable, collect::Collect};
 
-/// A wrapper type that implements Collect whenever the contained T is 'static, which is useful in
-/// generic contexts
+/// A wrapper type that implements Collect whenever the contained T is 'static,
+/// which is useful in generic contexts
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Default)]
 #[repr(transparent)]
 pub struct Static<T: ?Sized>(pub T);

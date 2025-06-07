@@ -1,11 +1,16 @@
-use core::alloc::{Allocator, Layout};
-use core::cell::Cell;
-use core::marker::PhantomData;
-use core::ptr::NonNull;
-use core::{fmt, ptr};
+use core::{
+    alloc::{Allocator, Layout},
+    cell::Cell,
+    fmt,
+    marker::PhantomData,
+    ptr,
+    ptr::NonNull,
+};
 
-use crate::context::Context;
-use crate::ptr::{MetaCollect, Metadata};
+use crate::{
+    context::Context,
+    ptr::{MetaCollect, Metadata},
+};
 
 /// A thin-pointer-sized box containing a type-erased GC object.
 /// Stores the metadata required by the GC algorithm inline.
@@ -20,16 +25,18 @@ impl GcBox {
     /// ^---- allocation                ^---- ptr
     /// ```
     ///
-    /// However, since we cannot know the header layout without knowing the value type,
-    /// we need to move the metadata and header together against the value tightly:
+    /// However, since we cannot know the header layout without knowing the
+    /// value type, we need to move the metadata and header together against
+    /// the value tightly:
     ///
     /// ```ignore
     /// |  pad  |--metadata--|--header--|--value--|
     /// ^---- allocation                ^---- ptr
     /// ```
     ///
-    /// This way, we can compute the metadata and header offsets from the untyped value
-    /// pointer. Note that the alignment of the former 2 fields should be satisfied.
+    /// This way, we can compute the metadata and header offsets from the
+    /// untyped value pointer. Note that the alignment of the former 2
+    /// fields should be satisfied.
     pub(crate) fn box_layout<'a, 'gc, T, M>(metadata: M) -> Option<(Layout, usize)>
     where
         T: ?Sized + 'a,
@@ -264,15 +271,12 @@ impl GcBoxHeader {
 
     #[inline]
     pub(crate) fn set_color(&self, color: GcColor) {
-        tagged_ptr::set::<0x3, _>(
-            &self.tagged_vtable,
-            match color {
-                GcColor::White => 0x0,
-                GcColor::WhiteWeak => 0x1,
-                GcColor::Gray => 0x2,
-                GcColor::Black => 0x3,
-            },
-        );
+        tagged_ptr::set::<0x3, _>(&self.tagged_vtable, match color {
+            GcColor::White => 0x0,
+            GcColor::WhiteWeak => 0x1,
+            GcColor::Gray => 0x2,
+            GcColor::Black => 0x3,
+        });
     }
     #[inline]
     pub(crate) fn needs_trace(&self) -> bool {
@@ -281,10 +285,10 @@ impl GcBoxHeader {
 
     /// Determines whether or not we've dropped the `dyn Collect` value
     /// stored in `GcBox.value`
-    /// When we garbage-collect a `GcBox` that still has outstanding weak pointers,
-    /// we set `alive` to false. When there are no more weak pointers remaining,
-    /// we will deallocate the `GcBox`, but skip dropping the `dyn Collect` value
-    /// (since we've already done it).
+    /// When we garbage-collect a `GcBox` that still has outstanding weak
+    /// pointers, we set `alive` to false. When there are no more weak
+    /// pointers remaining, we will deallocate the `GcBox`, but skip
+    /// dropping the `dyn Collect` value (since we've already done it).
     #[inline]
     pub(crate) fn is_live(&self) -> bool {
         tagged_ptr::get::<0x8, _>(self.tagged_vtable.get()) != 0x0
@@ -304,11 +308,13 @@ impl GcBoxHeader {
 /// Type-specific operations for GC'd values.
 ///
 /// We use a custom vtable instead of `dyn Collect` for extra flexibility.
-/// The type is over-aligned so that `GcBoxHeader` can store flags into the LSBs of the vtable pointer.
+/// The type is over-aligned so that `GcBoxHeader` can store flags into the LSBs
+/// of the vtable pointer.
 #[repr(align(16))]
 pub(crate) struct CollectVTable {
     box_layout: unsafe fn(GcBox) -> (Layout, usize),
-    /// Drops the value stored in the given `GcBox` (without deallocating the box).
+    /// Drops the value stored in the given `GcBox` (without deallocating the
+    /// box).
     drop_value: unsafe fn(GcBox),
     /// Traces the value stored in the given `GcBox`.
     trace_value: unsafe fn(GcBox, &mut Context),
@@ -353,24 +359,27 @@ impl CollectVTable {
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub(crate) enum GcColor {
-    /// An object that has not yet been reached by tracing (if we're in a tracing phase).
+    /// An object that has not yet been reached by tracing (if we're in a
+    /// tracing phase).
     ///
-    /// During `Phase::Sweep`, we will free all white objects that existed *before* the start of the
-    /// current `Phase::Sweep`. Objects allocated during `Phase::Sweep` will be white, but will not
-    /// be freed.
+    /// During `Phase::Sweep`, we will free all white objects that existed
+    /// *before* the start of the current `Phase::Sweep`. Objects allocated
+    /// during `Phase::Sweep` will be white, but will not be freed.
     White,
     /// Like White, but for objects weakly reachable from a Black object.
     ///
-    /// These objects may drop their contents during `Phase::Sweep`, but must stay allocated so that
-    /// weak references can check the alive status.
+    /// These objects may drop their contents during `Phase::Sweep`, but must
+    /// stay allocated so that weak references can check the alive status.
     WhiteWeak,
-    /// An object reachable from a Black object, but that has not yet been traced using
-    /// `Collect::trace`. We also mark black objects as gray during `Phase::Mark` in response to
-    /// a write barrier, so that we re-trace and find any objects newly reachable from the mutated
+    /// An object reachable from a Black object, but that has not yet been
+    /// traced using `Collect::trace`. We also mark black objects as gray
+    /// during `Phase::Mark` in response to a write barrier, so that we
+    /// re-trace and find any objects newly reachable from the mutated
     /// object.
     Gray,
-    /// An object that was reached during tracing. It will not be freed during `Phase::Sweep`. At
-    /// the end of `Phase::Sweep`, all black objects will be reset to white.
+    /// An object that was reached during tracing. It will not be freed during
+    /// `Phase::Sweep`. At the end of `Phase::Sweep`, all black objects will
+    /// be reset to white.
     Black,
 }
 

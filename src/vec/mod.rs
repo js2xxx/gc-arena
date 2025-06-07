@@ -11,7 +11,6 @@ use core::{
 use spec_from_iter::SpecFromIter;
 
 use self::set_len_on_drop::SetLenOnDrop;
-
 use crate::{Collect, Gc, Mutation, collect::Trace, gc::Unique};
 
 mod convert_vec;
@@ -25,8 +24,8 @@ pub use self::{convert_vec::ConvertVec, iter::IntoIter};
 use self::{spec_extend::SpecExtend, spec_from_elem::SpecFromElem};
 
 // Tiny Vecs are dumb. Skip to:
-// - 8 if the element size is 1, because any heap allocators is likely
-//   to round up a request of less than 8 bytes to at least 8 bytes.
+// - 8 if the element size is 1, because any heap allocators is likely to round
+//   up a request of less than 8 bytes to at least 8 bytes.
 // - 4 if elements are moderate-sized (<= 1 KiB).
 // - 1 otherwise, to avoid wasting too much space for very short Vecs.
 const fn min_non_zero_cap(size: usize) -> usize {
@@ -56,8 +55,8 @@ unsafe impl<'gc, T: 'gc + Collect<'gc>> Collect<'gc> for Vec<'gc, T> {
 
 /// Creates a GC'd [`Vec`] containing the arguments.
 ///
-/// `vec!` allows `Vec`s to be defined with the same syntax as array expressions.
-/// There are two forms of this macro:
+/// `vec!` allows `Vec`s to be defined with the same syntax as array
+/// expressions. There are two forms of this macro:
 ///
 /// - Create a [`Vec`] containing a given list of elements:
 ///
@@ -88,12 +87,12 @@ unsafe impl<'gc, T: 'gc + Collect<'gc>> Collect<'gc> for Vec<'gc, T> {
 /// This will use `clone` to duplicate an expression, so one should be careful
 /// using this with types having a nonstandard `Clone` implementation. For
 /// example, `vec![Rc::new(1); 5]` will create a vector of five references
-/// to the same boxed integer value, not five references pointing to independently
-/// boxed integers.
+/// to the same boxed integer value, not five references pointing to
+/// independently boxed integers.
 ///
 /// Also, note that `vec![expr; 0]` is allowed, and produces an empty vector.
-/// This will still evaluate `expr`, however, and immediately drop the resulting value, so
-/// be mindful of side effects.
+/// This will still evaluate `expr`, however, and immediately drop the resulting
+/// value, so be mindful of side effects.
 ///
 /// [`Vec`]: crate::vec::Vec
 #[macro_export]
@@ -114,9 +113,9 @@ impl<'gc, T: 'gc> Vec<'gc, T> {
 impl<'gc, T: 'gc + Collect<'gc>> Vec<'gc, T> {
     /// Constructs a new, empty `Vec<'gc, T>`.
     ///
-    /// Unlike [`Vec<T>`] from the standard library, this function **does allocate**
-    /// a minimal amount of buffer space. This is because [`Gc<'gc, T>`] needs a
-    /// header stored in the heap.
+    /// Unlike [`Vec<T>`] from the standard library, this function **does
+    /// allocate** a minimal amount of buffer space. This is because
+    /// [`Gc<'gc, T>`] needs a header stored in the heap.
     ///
     /// [`Vec<T>`]: alloc::vec::Vec
     ///
@@ -138,7 +137,8 @@ impl<'gc, T: 'gc + Collect<'gc>> Vec<'gc, T> {
         Self::with_capacity(mc, min_non_zero_cap(size_of::<T>()))
     }
 
-    /// Constructs a new, empty `Vec<'gc, T>` with at least the specified capacity.
+    /// Constructs a new, empty `Vec<'gc, T>` with at least the specified
+    /// capacity.
     ///
     /// The vector will be able to hold at least `capacity` elements without
     /// reallocating. This method is allowed to allocate for more elements than
@@ -147,8 +147,8 @@ impl<'gc, T: 'gc + Collect<'gc>> Vec<'gc, T> {
     /// If it is important to know the exact allocated capacity of a `Vec`,
     /// always use the [`capacity`] method after construction.
     ///
-    /// For `Vec<'gc, T>` where `T` is a zero-sized type, there will be no allocation
-    /// and the capacity will always be `usize::MAX`.
+    /// For `Vec<'gc, T>` where `T` is a zero-sized type, there will be no
+    /// allocation and the capacity will always be `usize::MAX`.
     ///
     /// [`capacity`]: Vec::capacity
     ///
@@ -285,9 +285,11 @@ impl<'gc, T: 'gc + Collect<'gc>> Vec<'gc, T> {
         }
     }
 
-    /// Converts the vector into a [`Unique<'gc, [T]>`][Unique GC'd slice] to allow for further mutation.
+    /// Converts the vector into a [`Unique<'gc, [T]>`][Unique GC'd slice] to
+    /// allow for further mutation.
     ///
-    /// Before doing the conversion, this method discards excess capacity like [`shrink_to_fit`].
+    /// Before doing the conversion, this method discards excess capacity like
+    /// [`shrink_to_fit`].
     ///
     /// [Unique GC'd slice]: Unique
     /// [`shrink_to_fit`]: Vec::shrink_to_fit
@@ -306,7 +308,8 @@ impl<'gc, T: 'gc + Collect<'gc>> Vec<'gc, T> {
 
     /// Converts the vector into a [`Gc<'gc, [T]>`][GC'd slice].
     ///
-    /// Before doing the conversion, this method discards excess capacity like [`shrink_to_fit`].
+    /// Before doing the conversion, this method discards excess capacity like
+    /// [`shrink_to_fit`].
     ///
     /// [GC'd slice]: Gc
     /// [`shrink_to_fit`]: Vec::shrink_to_fit
@@ -426,11 +429,13 @@ impl<'gc, T: 'gc + Collect<'gc>> Vec<'gc, T> {
 }
 
 impl<'gc, T: 'gc> Vec<'gc, T> {
-    /// Creates a `Vec<'gc, T>` directly from a pointer, a length, and a capacity.
+    /// Creates a `Vec<'gc, T>` directly from a pointer, a length, and a
+    /// capacity.
     ///
     /// # Safety
     ///
-    /// `ptr`, `len`, and `capacity` must be previously returned from [`Vec::into_raw_parts`].
+    /// `ptr`, `len`, and `capacity` must be previously returned from
+    /// [`Vec::into_raw_parts`].
     ///
     /// [`Vec::into_raw_parts`]: Vec::into_raw_parts
     pub unsafe fn from_raw_parts(ptr: *mut T, len: usize, capacity: usize) -> Self {
@@ -440,7 +445,8 @@ impl<'gc, T: 'gc> Vec<'gc, T> {
         Self { buf, len }
     }
 
-    /// Decomposes a `Vec<'gc, T>` into its raw components: `(pointer, length, capacity)`.
+    /// Decomposes a `Vec<'gc, T>` into its raw components: `(pointer, length,
+    /// capacity)`.
     pub fn into_raw_parts(self) -> (*mut T, usize, usize) {
         let mut this = ManuallyDrop::new(self);
         (this.as_mut_ptr(), this.len, this.capacity())
@@ -461,9 +467,9 @@ impl<'gc, T: 'gc> Vec<'gc, T> {
         if self.len > len {
             // SAFETY:
             //
-            // * the `len` of the vector is shrunk before calling `collect`,
-            //   such that no value will be traced twice in case `collect`
-            //   were to panic once (if it panics twice, the program aborts).
+            // * the `len` of the vector is shrunk before calling `collect`, such that no
+            //   value will be traced twice in case `collect` were to panic once (if it
+            //   panics twice, the program aborts).
             unsafe {
                 self.set_len(len);
                 let () = Self::ASSERT_NO_DROP;
@@ -475,19 +481,20 @@ impl<'gc, T: 'gc> Vec<'gc, T> {
     ///
     /// Equivalent to `&s[..]`.
     pub fn as_slice(&self) -> &[T] {
-        // SAFETY: `slice::from_raw_parts` requires pointee is a contiguous, aligned buffer of size
-        // `len` containing properly-initialized `T`s. Data must not be mutated for the returned
-        // lifetime. Further, `len * size_of::<T>` <= `isize::MAX`, and allocation does not
-        // "wrap" through overflowing memory addresses.
+        // SAFETY: `slice::from_raw_parts` requires pointee is a contiguous, aligned
+        // buffer of size `len` containing properly-initialized `T`s. Data must
+        // not be mutated for the returned lifetime. Further, `len *
+        // size_of::<T>` <= `isize::MAX`, and allocation does not "wrap" through
+        // overflowing memory addresses.
         //
         // * Vec API guarantees that self.buf:
         //      * contains only properly-initialized items within 0..len
         //      * is aligned, contiguous, and valid for `len` reads
         //      * obeys size and address-wrapping constraints
         //
-        // * We only construct `&mut` references to `self.buf` through `&mut self` methods; borrow-
-        //   check ensures that it is not possible to mutably alias `self.buf` within the
-        //   returned lifetime.
+        // * We only construct `&mut` references to `self.buf` through `&mut self`
+        //   methods; borrow- check ensures that it is not possible to mutably alias
+        //   `self.buf` within the returned lifetime.
         unsafe { slice::from_raw_parts(self.as_ptr(), self.len) }
     }
 
@@ -495,19 +502,20 @@ impl<'gc, T: 'gc> Vec<'gc, T> {
     ///
     /// Equivalent to `&mut s[..]`.
     pub fn as_mut_slice(&mut self) -> &mut [T] {
-        // SAFETY: `slice::from_raw_parts_mut` requires pointee is a contiguous, aligned buffer of
-        // size `len` containing properly-initialized `T`s. Data must not be accessed through any
-        // other pointer for the returned lifetime. Further, `len * size_of::<T>` <=
-        // `ISIZE::MAX` and allocation does not "wrap" through overflowing memory addresses.
+        // SAFETY: `slice::from_raw_parts_mut` requires pointee is a contiguous, aligned
+        // buffer of size `len` containing properly-initialized `T`s. Data must
+        // not be accessed through any other pointer for the returned lifetime.
+        // Further, `len * size_of::<T>` <= `ISIZE::MAX` and allocation does not
+        // "wrap" through overflowing memory addresses.
         //
         // * Vec API guarantees that self.buf:
         //      * contains only properly-initialized items within 0..len
         //      * is aligned, contiguous, and valid for `len` reads
         //      * obeys size and address-wrapping constraints
         //
-        // * We only construct references to `self.buf` through `&self` and `&mut self` methods;
-        //   borrow-check ensures that it is not possible to construct a reference to `self.buf`
-        //   within the returned lifetime.
+        // * We only construct references to `self.buf` through `&self` and `&mut self`
+        //   methods; borrow-check ensures that it is not possible to construct a
+        //   reference to `self.buf` within the returned lifetime.
         unsafe { slice::from_raw_parts_mut(self.as_mut_ptr(), self.len) }
     }
 
@@ -551,8 +559,9 @@ impl<'gc, T: 'gc> Vec<'gc, T> {
     ///
     /// The removed element is replaced by the last element of the vector.
     ///
-    /// This does not preserve ordering of the remaining elements, but is *O*(1).
-    /// If you need to preserve the element order, use [`remove`] instead.
+    /// This does not preserve ordering of the remaining elements, but is
+    /// *O*(1). If you need to preserve the element order, use [`remove`]
+    /// instead.
     ///
     /// [`remove`]: Vec::remove
     ///
@@ -586,8 +595,8 @@ impl<'gc, T: 'gc> Vec<'gc, T> {
     /// shifting all elements after it to the left.
     ///
     /// Note: Because this shifts over the remaining elements, it has a
-    /// worst-case performance of *O*(*n*). If you don't need the order of elements
-    /// to be preserved, use [`swap_remove`] instead.
+    /// worst-case performance of *O*(*n*). If you don't need the order of
+    /// elements to be preserved, use [`swap_remove`] instead.
     ///
     /// [`swap_remove`]: Vec::swap_remove
     ///
@@ -624,11 +633,12 @@ impl<'gc, T: 'gc> Vec<'gc, T> {
         }
     }
 
-    /// Appends an element if there is sufficient spare capacity, otherwise an error is returned
-    /// with the element.
+    /// Appends an element if there is sufficient spare capacity, otherwise an
+    /// error is returned with the element.
     ///
-    /// Unlike [`push`] this method will not reallocate when there's insufficient capacity.
-    /// The caller should use [`reserve`] to ensure that there is enough capacity.
+    /// Unlike [`push`] this method will not reallocate when there's
+    /// insufficient capacity. The caller should use [`reserve`] to ensure
+    /// that there is enough capacity.
     ///
     /// [`push`]: Vec::push
     /// [`reserve`]: Vec::reserve
@@ -770,16 +780,16 @@ impl<'gc, T: 'gc + Collect<'gc> + Clone> Vec<'gc, T> {
 impl<'gc, T: 'gc + Collect<'gc>> Vec<'gc, T> {
     /// Extends a `Vec` with the contents of an iterator.
     ///
-    /// The signature differs from the [`Extend`] trait from the standard library
-    /// since a [`Mutation`] is required to handle the allocation.
+    /// The signature differs from the [`Extend`] trait from the standard
+    /// library since a [`Mutation`] is required to handle the allocation.
     pub fn extend<I: IntoIterator<Item = T>>(&mut self, mc: &Mutation<'gc>, iter: I) {
         SpecExtend::extend(self, mc, iter.into_iter());
     }
 
     /// Extends a `Vec` with the contents of an iterator via cloning.
     ///
-    /// The signature differs from the [`Extend`] trait from the standard library
-    /// since a [`Mutation`] is required to handle the allocation.
+    /// The signature differs from the [`Extend`] trait from the standard
+    /// library since a [`Mutation`] is required to handle the allocation.
     pub fn extend_ref<'a, I: IntoIterator<Item = &'a T>>(&mut self, mc: &Mutation<'gc>, iter: I)
     where
         T: Clone + 'a,
@@ -789,15 +799,16 @@ impl<'gc, T: 'gc + Collect<'gc>> Vec<'gc, T> {
 
     /// Transforms an iterator into a `Vec`.
     ///
-    /// The signature of this function differs from [`Iterator::collect`] from the
-    /// standard library since a [`Mutation`] is required to handle the allocation.
+    /// The signature of this function differs from [`Iterator::collect`] from
+    /// the standard library since a [`Mutation`] is required to handle the
+    /// allocation.
     pub fn collect<I: IntoIterator<Item = T>>(mc: &Mutation<'gc>, iter: I) -> Self {
         let () = Self::ASSERT_NO_DROP;
         SpecFromIter::from_iter(mc, iter.into_iter())
     }
 
-    // leaf method to which various SpecFrom/SpecExtend implementations delegate when
-    // they have no further optimizations to apply
+    // leaf method to which various SpecFrom/SpecExtend implementations delegate
+    // when they have no further optimizations to apply
     #[track_caller]
     fn extend_desugared<I: Iterator<Item = T>>(&mut self, mc: &Mutation<'gc>, mut iterator: I) {
         // This is the case for a general iterator.
@@ -823,8 +834,9 @@ impl<'gc, T: 'gc + Collect<'gc>> Vec<'gc, T> {
         }
     }
 
-    // specific extend for `TrustedLen` iterators, called both by the specializations
-    // and internal places where resolving specialization makes compilation slower
+    // specific extend for `TrustedLen` iterators, called both by the
+    // specializations and internal places where resolving specialization makes
+    // compilation slower
     #[track_caller]
     fn extend_trusted(&mut self, mc: &Mutation<'gc>, iterator: impl TrustedLen<Item = T>) {
         let (low, high) = iterator.size_hint();
@@ -849,10 +861,10 @@ impl<'gc, T: 'gc + Collect<'gc>> Vec<'gc, T> {
             }
         } else {
             // Per TrustedLen contract a `None` upper bound means that the iterator length
-            // truly exceeds usize::MAX, which would eventually lead to a capacity overflow anyway.
-            // Since the other branch already panics eagerly (via `reserve()`) we do the same here.
-            // This avoids additional codegen for a fallback code path which would eventually
-            // panic anyway.
+            // truly exceeds usize::MAX, which would eventually lead to a capacity overflow
+            // anyway. Since the other branch already panics eagerly (via `reserve()`) we do
+            // the same here. This avoids additional codegen for a fallback code path which
+            // would eventually panic anyway.
             panic!("capacity overflow");
         }
     }

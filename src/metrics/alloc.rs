@@ -1,6 +1,5 @@
-use core::{alloc::Layout, marker::PhantomData, ptr::NonNull};
-
 use alloc::alloc::{AllocError, Allocator, Global};
+use core::{alloc::Layout, marker::PhantomData, ptr::NonNull};
 
 use crate::{collect::Collect, context::Mutation, metrics::Metrics, types::Invariant};
 
@@ -17,14 +16,17 @@ impl<'gc> MetricsAlloc<'gc> {
         Self::new_in(mc, Global)
     }
 
-    /// `MetricsAlloc` is normally branded with the `'gc` branding lifetime to ensure that it is not
-    /// placed in the wrong arena or used outside of the enclosing arena.
+    /// `MetricsAlloc` is normally branded with the `'gc` branding lifetime to
+    /// ensure that it is not placed in the wrong arena or used outside of
+    /// the enclosing arena.
     ///
-    /// This is actually completely artificial and only used as a lint: `gc_arena::metrics::Metrics`
-    /// has no lifetime at all. Therefore, we can safely provide a method that returns a
-    /// `MetricsAlloc` with an arbitrary lifetime.
+    /// This is actually completely artificial and only used as a lint:
+    /// `gc_arena::metrics::Metrics` has no lifetime at all. Therefore, we
+    /// can safely provide a method that returns a `MetricsAlloc` with an
+    /// arbitrary lifetime.
     ///
-    /// NOTE: Use `MetricsAlloc::new` if at all possible, because it is harder to misuse.
+    /// NOTE: Use `MetricsAlloc::new` if at all possible, because it is harder
+    /// to misuse.
     #[inline]
     pub fn from_metrics(metrics: Metrics) -> Self {
         Self::from_metrics_in(metrics, Global)

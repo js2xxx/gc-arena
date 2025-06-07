@@ -53,9 +53,8 @@ unsafe impl<T> Uninit for [MaybeUninit<T>] {
 ///
 /// - The metadata type must be contains valid information of the pointee type
 ///   even if its associated pointer is not dereferencable.
-/// - The pointer type must inherit the "pointer-like" behavior. For example,
-///   it must be possible to be dereferenced if its metadata and address are
-///   valid.
+/// - The pointer type must inherit the "pointer-like" behavior. For example, it
+///   must be possible to be dereferenced if its metadata and address are valid.
 /// - The reference type must inherit the "reference-like" behavior, just like
 ///   the built-in `&T`.
 ///
@@ -93,25 +92,27 @@ pub unsafe trait Metadata<'a, T: ?Sized + 'a>: Copy + PartialEq {
 
 /// A trait that implies the [`Metadata`] trait for built-in pointer types.
 ///
-/// This trait is implemented for all built-in pointer metadata types, e.g., `()`,
-/// `usize`, and `DynMetadata<Self>`. Nevertheless, users may also implement
-/// this trait for their own custom pointer metadata types to enable [dereferencing
-/// GC pointers].
+/// This trait is implemented for all built-in pointer metadata types, e.g.,
+/// `()`, `usize`, and `DynMetadata<Self>`. Nevertheless, users may also
+/// implement this trait for their own custom pointer metadata types to enable
+/// [dereferencing GC pointers].
 ///
 /// # Safety
 ///
-/// 1. The `ptr_metadata` function must return a valid metadata of the pointee type.
-///    That is, the metadata must be valid even if the pointer is not safe to dereference.
-/// 2. If this trait is implemented, the `Metadata` trait must also be implemented conforming
-///    to the native pointer equivalents:
+/// 1. The `ptr_metadata` function must return a valid metadata of the pointee
+///    type. That is, the metadata must be valid even if the pointer is not safe
+///    to dereference.
+/// 2. If this trait is implemented, the `Metadata` trait must also be
+///    implemented conforming to the native pointer equivalents:
 ///    - `Ptr` and `Ref` must be `NonNull<T>` and `&'a T` respectively;
-///    - `with_addr`, `addr`, and `as_ref` methods must forward to the built-in equivalents.
+///    - `with_addr`, `addr`, and `as_ref` methods must forward to the built-in
+///      equivalents.
 ///
-/// Implementors may find it lengthy to write such implementation code by hand. The
-/// [`macro@PtrMetadata`] derive macro is provided to get rid of this boilerplate. However,
-/// The first safety requirement is **not automatically satisfied** by the derive macro
-/// (as annotated with the options in the attribute), which implementors must guarantee by
-/// themselves.
+/// Implementors may find it lengthy to write such implementation code by hand.
+/// The [`macro@PtrMetadata`] derive macro is provided to get rid of this
+/// boilerplate. However, The first safety requirement is **not automatically
+/// satisfied** by the derive macro (as annotated with the options in the
+/// attribute), which implementors must guarantee by themselves.
 ///
 /// [dereferencing GC pointers]: crate::gc::Gc
 pub unsafe trait PtrMetadata<'a, T: ?Sized + 'a>:
@@ -150,8 +151,8 @@ macro_rules! impl_ptr_metadata {
 /// # Safety
 ///
 /// - The `layout` function must return a valid layout of the pointee type.
-/// - The `drop_in_place` function must drop the pointee type correctly, if
-///   the provided pointer is valid.
+/// - The `drop_in_place` function must drop the pointee type correctly, if the
+///   provided pointer is valid.
 pub unsafe trait MetaLayout<'a, T: ?Sized + 'a>: Metadata<'a, T> {
     /// Returns the layout of its associated pointee object.
     fn layout(self) -> Result<Layout, LayoutError>;

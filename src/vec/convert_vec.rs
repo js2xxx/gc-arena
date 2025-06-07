@@ -1,6 +1,5 @@
-use crate::{Collect, Mutation};
-
 use super::Vec;
+use crate::{Collect, Mutation};
 
 pub(super) trait SpecToVec<'gc> {
     fn to_vec(mc: &Mutation<'gc>, s: &[Self]) -> Vec<'gc, Self>
@@ -31,10 +30,7 @@ impl<'gc, T: Clone + Collect<'gc> + 'gc> SpecToVec<'gc> for T {
         }
 
         let mut vec = Vec::with_capacity(mc, s.len());
-        let mut guard = DropGuard {
-            vec: &mut vec,
-            num_init: 0,
-        };
+        let mut guard = DropGuard { vec: &mut vec, num_init: 0 };
         let slots = guard.vec.spare_capacity_mut();
         // .take(slots.len()) is necessary for LLVM to remove bounds checks
         // and has better codegen than zip.

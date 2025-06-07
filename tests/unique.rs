@@ -13,9 +13,7 @@ fn simple_allocation() {
         test: Unique<'gc, i32>,
     }
 
-    let arena = Arena::<Rootable![TestRoot<'_>]>::new(|mc| TestRoot {
-        test: Unique::new(mc, 42),
-    });
+    let arena = Arena::<Rootable![TestRoot<'_>]>::new(|mc| TestRoot { test: Unique::new(mc, 42) });
 
     arena.mutate(|_mc, root| {
         assert_eq!(*(root.test), 42);

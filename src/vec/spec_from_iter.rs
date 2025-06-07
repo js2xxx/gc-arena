@@ -1,8 +1,7 @@
 use core::{cmp, iter::TrustedLen, ptr};
 
-use crate::{Collect, Mutation};
-
 use super::{SpecExtend, Vec, min_non_zero_cap};
+use crate::{Collect, Mutation};
 
 pub trait SpecFromIter<'gc, T: Collect<'gc> + 'gc, I> {
     fn from_iter(mc: &Mutation<'gc>, iter: I) -> Self;
@@ -22,13 +21,13 @@ where
 //
 // - If `T` contains a GC'd pointer, then the GC'd pointer only implements
 //   `Collect<'gc>` because of invariance, so it can only be collected in the
-//   arena branded by `'gc` and cannot be placed into `IntoIter<'gc1, T>`,
-//   which is fine;
+//   arena branded by `'gc` and cannot be placed into `IntoIter<'gc1, T>`, which
+//   is fine;
 //
-// - However, if `T` doesn't contain any non-GC'd pointer, then it can be
-//   collected in any arena, but `IntoIter<'gc1, T>` still cannot. Since
-//   rustc's specialization RFC doesn't support specializing on lifetimes, we
-//   cannot implement it soundly transferring the buffer into the new vec.
+// - However, if `T` doesn't contain any GC'd pointer, then it can be collected
+//   in any arena, but `IntoIter<'gc1, T>` still cannot. Since rustc's
+//   specialization RFC doesn't support specializing on lifetimes, we cannot
+//   implement it soundly transferring the buffer into the new vec.
 //
 // TODO(?): Find another way to implement it.
 

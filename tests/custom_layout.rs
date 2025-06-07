@@ -1,11 +1,12 @@
 #![feature(ptr_metadata)]
 
-use gc_arena::{Collect, arena::rootless_mutate, collect::Trace, gc::Unique, ptr::*};
 use std::{
     alloc::{Layout, LayoutError},
     mem::MaybeUninit,
     ptr::NonNull,
 };
+
+use gc_arena::{Collect, arena::rootless_mutate, collect::Trace, gc::Unique, ptr::*};
 
 #[test]
 fn custom_layout() {
@@ -45,10 +46,7 @@ fn custom_layout() {
 
     rootless_mutate(|mc| {
         // Layout { size: 16, align: (1 << 10) == 1024 }
-        let layout = CompactLayout {
-            size: 16,
-            align_bit: 10,
-        };
+        let layout = CompactLayout { size: 16, align_bit: 10 };
 
         let unique = Unique::with_metadata::<true>(mc, layout);
         assert!(unique.0.iter().all(|&b| unsafe { b.assume_init() == 0 }));

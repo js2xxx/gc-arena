@@ -1,8 +1,7 @@
 use core::{iter::TrustedLen, slice};
 
-use crate::{Collect, Mutation};
-
 use super::{IntoIter, Vec};
+use crate::{Collect, Mutation};
 
 pub(super) trait SpecExtend<'gc, T, I> {
     #[track_caller]
@@ -37,10 +36,10 @@ where
 /// - `T: Collect<'gc>` means that elements of type `T` can be collected in this
 ///   arena:
 ///   - If `T` contains a GC'd pointer, then the GC'd pointer only implements
-///     `Collect<'gc>` because of invariance, so it can only be collected in this
-///     arena;
-///   - If `T` doesn't contain any non-GC'd pointer, than it can be collected
-///     in any arena.
+///     `Collect<'gc>` because of invariance, so it can only be collected in
+///     this arena;
+///   - If `T` doesn't contain any non-GC'd pointer, than it can be collected in
+///     any arena.
 impl<'gc, 'gc1, T: Collect<'gc>> SpecExtend<'gc, T, IntoIter<'gc1, T>> for Vec<'gc, T> {
     #[track_caller]
     fn extend(&mut self, mc: &Mutation<'gc>, mut iterator: IntoIter<'gc1, T>) {
