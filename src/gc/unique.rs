@@ -7,16 +7,11 @@ use core::{
     marker::{PhantomData, Unsize},
     mem::MaybeUninit,
     ops::{Deref, DerefMut},
-    ptr::{NonNull, Pointee},
+    ptr::NonNull,
 };
 
 use crate::{
-    Finalization, Gc,
-    collect::{Collect, Trace},
-    context::Mutation,
-    ptr::{MetaCollect, Metadata, PtrMeta, PtrMetadata, Uninit},
-    types::{GcBox, GcColor, Invariant},
-    vec::Vec,
+    collect::{Collect, Trace}, context::Mutation, ptr::{native, MetaCollect, Metadata, PtrMeta, PtrMetadata, Uninit}, types::{GcBox, GcColor, Invariant}, vec::Vec, Finalization, Gc
 };
 
 /// A uniquely-owned garbage-collected pointer to a type `T`.
@@ -255,12 +250,13 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, T> {
     pub fn new_unsize<'a, Dyn>(mc: &Mutation<'gc>, t: T) -> Unique<'gc, Dyn>
     where
         T: Unsize<Dyn> + 'a,
-        Dyn: 'gc + ?Sized + Pointee<Metadata: MetaCollect<'gc, 'a, T, Ptr = NonNull<T>>>,
+        Dyn: 'gc + ?Sized,
+        native::Unsized<Dyn>: MetaCollect<'gc, 'a, T, Ptr = NonNull<T>>,
     {
         let metadata = core::ptr::metadata(&t as &Dyn);
-        let gc_box = mc.allocate::<T, _, false>(metadata);
+        let gc_box = mc.allocate::<T, _, false>(native::Unsized(metadata));
         // SAFETY: `ptr` is a uninit pointer to `Dyn` which can receive a `T`.
-        unsafe { gc_box.unerase::<T, PtrMeta<Dyn>>().write(t) };
+        unsafe { gc_box.unerase::<T, ()>().write(t) };
 
         Unique {
             ptr: gc_box,

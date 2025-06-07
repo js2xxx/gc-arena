@@ -60,8 +60,8 @@ impl<'gc, T: 'gc + Collect<'gc>> IntoIter<'gc, T> {
             // SAFETY: `self.start` and `self.end` are valid
             // pointers to the same allocation as `self.buf`.
             return unsafe {
-                let (ptr, cap) = Unique::into_ptr(ptr::read(&this.buf)).to_raw_parts();
-                let dst = ptr.cast::<T>();
+                let cap = this.buf.len();
+                let dst = Unique::into_ptr(ptr::read(&this.buf)).cast::<T>();
                 let src = this.start.as_ptr();
 
                 if !ptr::addr_eq(src, dst) {

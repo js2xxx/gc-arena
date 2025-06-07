@@ -435,7 +435,8 @@ impl<'gc, T: 'gc> Vec<'gc, T> {
     /// [`Vec::into_raw_parts`]: Vec::into_raw_parts
     pub unsafe fn from_raw_parts(ptr: *mut T, len: usize, capacity: usize) -> Self {
         let () = Self::ASSERT_NO_DROP;
-        let buf = unsafe { Unique::from_ptr(ptr::from_raw_parts_mut(ptr, capacity)) };
+        let ptr = ptr::slice_from_raw_parts_mut(ptr.cast::<MaybeUninit<T>>(), capacity);
+        let buf = unsafe { Unique::from_ptr(ptr) };
         Self { buf, len }
     }
 

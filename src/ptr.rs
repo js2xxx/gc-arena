@@ -6,6 +6,8 @@ use core::{
 
 use crate::{Collect, collect::Trace};
 
+pub(crate) mod native;
+
 pub(crate) type PtrMeta<T> = <T as Pointee>::Metadata;
 
 /// A type that is valid when uninitalized.
@@ -57,13 +59,8 @@ unsafe impl<T> Uninit for [MaybeUninit<T>] {
 /// - The reference type must inherit the "reference-like" behavior, just like
 ///   the built-in `&T`.
 ///
-/// [built-in pointee type]: core::ptr::Pointee
-pub unsafe trait Metadata<
-    'a,
-    T: ?Sized + 'a + Pointee<Metadata = Marker>,
-    Marker = <T as Pointee>::Metadata,
->: Copy + PartialEq
-{
+/// [built-in pointee type]: core::ptr::metadata
+pub unsafe trait Metadata<'a, T: ?Sized + 'a>: Copy + PartialEq {
     /// The associated pointer type.
     type Ptr: Copy;
 
@@ -117,11 +114,8 @@ pub unsafe trait Metadata<
 /// themselves.
 ///
 /// [dereferencing GC pointers]: crate::gc::Gc
-pub unsafe trait PtrMetadata<
-    'a,
-    T: ?Sized + 'a + Pointee<Metadata = Marker>,
-    Marker = <T as Pointee>::Metadata,
->: Metadata<'a, T, Marker, Ptr = NonNull<T>, Ref = &'a T>
+pub unsafe trait PtrMetadata<'a, T: ?Sized + 'a>:
+    Metadata<'a, T, Ptr = NonNull<T>, Ref = &'a T>
 {
     /// Returns a valid pointer metadata of the pointee type.
     fn ptr_metadata(self) -> PtrMeta<T>;
@@ -158,12 +152,7 @@ macro_rules! impl_ptr_metadata {
 /// - The `layout` function must return a valid layout of the pointee type.
 /// - The `drop_in_place` function must drop the pointee type correctly, if
 ///   the provided pointer is valid.
-pub unsafe trait MetaLayout<
-    'a,
-    T: ?Sized + 'a + Pointee<Metadata = Marker>,
-    Marker = <T as Pointee>::Metadata,
->: Metadata<'a, T, Marker>
-{
+pub unsafe trait MetaLayout<'a, T: ?Sized + 'a>: Metadata<'a, T> {
     /// Returns the layout of its associated pointee object.
     fn layout(self) -> Result<Layout, LayoutError>;
 
@@ -207,15 +196,18 @@ pub unsafe trait MetaCollect<'gc, 'a, T: ?Sized + 'a>: MetaLayout<'a, T> {
 
 macro_rules! impl_sized {
     ($($t:ty $(: ($($bounds:tt)*))?),* $(,)?) => {$(
-        unsafe impl<'a, T: 'a, $($($bounds)*)?> PtrMetadata<'a, T, ()> for $t {
+        unsafe impl<'a, T: 'a, $($($bounds)*)?> PtrMetadata<'a, T> for $t {
             fn ptr_metadata(self) {}
         }
 
-        unsafe impl<'a, T: 'a, $($($bounds)*)?> Metadata<'a, T, ()> for $t {
+        unsafe impl<'a, T: 'a + ?Sized, $($($bounds)*)?> Metadata<'a, T> for $t
+        where
+            $t: PtrMetadata<'a, T>
+        {
             impl_ptr_metadata!(T);
         }
 
-        unsafe impl<'a, T: 'a, $($($bounds)*)?> MetaLayout<'a, T, ()> for $t {
+        unsafe impl<'a, T: 'a, $($($bounds)*)?> MetaLayout<'a, T> for $t {
             #[inline]
             fn layout(self) -> Result<Layout, LayoutError> {
                 Ok(Layout::new::<T>())
@@ -247,19 +239,15 @@ macro_rules! impl_sized {
 impl_sized! {
     (),
     usize,
-    DynMetadata<Dyn>: (Dyn: ?Sized),
+    native::Unsized<Dyn>: (Dyn: ?Sized),
 }
 
 // Implementation for slices.
 
-unsafe impl<'a, T: 'a> PtrMetadata<'a, [T], usize> for usize {
+unsafe impl<'a, T: 'a> PtrMetadata<'a, [T]> for usize {
     fn ptr_metadata(self) -> usize {
         self
     }
-}
-
-unsafe impl<'a, T: 'a> Metadata<'a, [T]> for usize {
-    impl_ptr_metadata!([T]);
 }
 
 unsafe impl<'a, T: 'a> MetaLayout<'a, [T]> for usize {
@@ -291,14 +279,10 @@ where
 
 // Implementation for strings.
 
-unsafe impl<'a> PtrMetadata<'a, str, usize> for usize {
+unsafe impl<'a> PtrMetadata<'a, str> for usize {
     fn ptr_metadata(self) -> usize {
         self
     }
-}
-
-unsafe impl<'a> Metadata<'a, str> for usize {
-    impl_ptr_metadata!(str);
 }
 
 unsafe impl<'a> MetaLayout<'a, str> for usize {
@@ -328,7 +312,7 @@ unsafe impl<'gc, 'a> MetaCollect<'gc, 'a, str> for usize {
 
 // Implementation for trait objects.
 
-unsafe impl<'a, U, Dyn> PtrMetadata<'a, U, DynMetadata<Dyn>> for DynMetadata<Dyn>
+unsafe impl<'a, U, Dyn> PtrMetadata<'a, U> for DynMetadata<Dyn>
 where
     U: ?Sized + Pointee<Metadata = Self> + 'a,
     Dyn: ?Sized,
@@ -338,7 +322,7 @@ where
     }
 }
 
-unsafe impl<'a, U, Dyn> Metadata<'a, U, DynMetadata<Dyn>> for DynMetadata<Dyn>
+unsafe impl<'a, U, Dyn> Metadata<'a, U> for DynMetadata<Dyn>
 where
     U: ?Sized + Pointee<Metadata = Self> + 'a,
     Dyn: ?Sized,
@@ -348,7 +332,7 @@ where
 
 // Implementation for custom-layout bytes.
 
-unsafe impl<'a> PtrMetadata<'a, [u8], usize> for Layout {
+unsafe impl<'a> PtrMetadata<'a, [u8]> for Layout {
     fn ptr_metadata(self) -> usize {
         self.size()
     }
@@ -381,7 +365,7 @@ unsafe impl<'gc, 'a> MetaCollect<'gc, 'a, [u8]> for Layout {
     }
 }
 
-unsafe impl<'a> PtrMetadata<'a, [MaybeUninit<u8>], usize> for Layout {
+unsafe impl<'a> PtrMetadata<'a, [MaybeUninit<u8>]> for Layout {
     fn ptr_metadata(self) -> usize {
         self.size()
     }

@@ -8,7 +8,7 @@ use core::{
     marker::{PhantomData, Unsize},
     mem::MaybeUninit,
     ops::Deref,
-    ptr::{NonNull, Pointee},
+    ptr::NonNull,
     str::Utf8Error,
 };
 
@@ -17,7 +17,7 @@ use crate::{
     barrier::{Unlock, Write},
     collect::{Collect, Static, Trace},
     context::Mutation,
-    ptr::{MetaCollect, Metadata, PtrMeta, PtrMetadata, Uninit},
+    ptr::{MetaCollect, Metadata, PtrMeta, PtrMetadata, Uninit, native},
     types::{GcBox, GcColor, Invariant},
     vec::Vec,
 };
@@ -157,7 +157,8 @@ impl<'gc, T: Collect<'gc> + 'gc> Gc<'gc, T> {
     where
         T: Unsize<Dyn> + 'a,
         Dyn: 'gc + 'a + ?Sized,
-        <Dyn as Pointee>::Metadata: MetaCollect<'gc, 'a, T, Ptr = NonNull<T>> + Metadata<'a, Dyn>,
+        native::Unsized<Dyn>: MetaCollect<'gc, 'a, T, Ptr = NonNull<T>>,
+        PtrMeta<Dyn>: Metadata<'a, Dyn>,
     {
         Unique::new_unsize::<Dyn>(mc, t).into_gc()
     }
