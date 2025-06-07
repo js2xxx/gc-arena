@@ -56,9 +56,6 @@ unsafe impl<T> Uninit for [MaybeUninit<T>] {
 ///   valid.
 /// - The reference type must inherit the "reference-like" behavior, just like
 ///   the built-in `&T`.
-/// - If `Ptr` and `Ref` are built-in pointer types (i.e., `NonNull<T>` and `&'a T`),
-///   the `with_addr`, `addr`, and `as_ref` methods must forward to the built-in
-///   equivalents directly.
 ///
 /// [built-in pointee type]: core::ptr::Pointee
 pub unsafe trait Metadata<
@@ -68,10 +65,10 @@ pub unsafe trait Metadata<
 >: Copy + PartialEq
 {
     /// The associated pointer type.
-    type Ptr: Copy = NonNull<T>;
+    type Ptr: Copy;
 
     /// The associated reference type.
-    type Ref: Copy = &'a T;
+    type Ref: Copy;
 
     /// Creates a pointer from the given address and metadata.
     ///
@@ -97,13 +94,61 @@ pub unsafe trait Metadata<
     unsafe fn as_ref(ptr: Self::Ptr) -> Self::Ref;
 }
 
-/// A trait alias that implies the [`Metadata`] trait for built-in pointer types.
-pub trait PtrMetadata<'a, T: ?Sized + 'a>: Metadata<'a, T, Ptr = NonNull<T>, Ref = &'a T> {}
-impl<'a, T, M> PtrMetadata<'a, T> for M
-where
-    T: ?Sized + 'a,
-    M: Metadata<'a, T, Ptr = NonNull<T>, Ref = &'a T>,
+/// A trait that implies the [`Metadata`] trait for built-in pointer types.
+///
+/// This trait is implemented for all built-in pointer metadata types, e.g., `()`,
+/// `usize`, and `DynMetadata<Self>`. Nevertheless, users may also implement
+/// this trait for their own custom pointer metadata types to enable [dereferencing
+/// GC pointers].
+///
+/// # Safety
+///
+/// 1. The `ptr_metadata` function must return a valid metadata of the pointee type.
+///    That is, the metadata must be valid even if the pointer is not safe to dereference.
+/// 2. If this trait is implemented, the `Metadata` trait must also be implemented conforming
+///    to the native pointer equivalents:
+///    - `Ptr` and `Ref` must be `NonNull<T>` and `&'a T` respectively;
+///    - `with_addr`, `addr`, and `as_ref` methods must forward to the built-in equivalents.
+///
+/// Implementors may find it lengthy to write such implementation code by hand. The
+/// [`macro@PtrMetadata`] derive macro is provided to get rid of this boilerplate. However,
+/// The first safety requirement is **not automatically satisfied** by the derive macro
+/// (as annotated with the options in the attribute), which implementors must guarantee by
+/// themselves.
+///
+/// [dereferencing GC pointers]: crate::gc::Gc
+pub unsafe trait PtrMetadata<
+    'a,
+    T: ?Sized + 'a + Pointee<Metadata = Marker>,
+    Marker = <T as Pointee>::Metadata,
+>: Metadata<'a, T, Marker, Ptr = NonNull<T>, Ref = &'a T>
 {
+    /// Returns a valid pointer metadata of the pointee type.
+    fn ptr_metadata(self) -> PtrMeta<T>;
+}
+
+pub use gc_arena_derive::PtrMetadata;
+
+macro_rules! impl_ptr_metadata {
+    ($ty:ty) => {
+        type Ptr = NonNull<$ty>;
+
+        type Ref = &'a $ty;
+
+        fn with_addr(self, addr: NonNull<()>) -> NonNull<$ty> {
+            NonNull::<$ty>::from_raw_parts(addr, PtrMetadata::<'a, $ty>::ptr_metadata(self))
+        }
+
+        #[inline]
+        fn addr(ptr: NonNull<$ty>) -> NonNull<()> {
+            ptr.cast()
+        }
+
+        #[inline]
+        unsafe fn as_ref(ptr: NonNull<$ty>) -> &'a $ty {
+            unsafe { ptr.as_ref() }
+        }
+    };
 }
 
 /// A generalized pointer metadata type with layout information.
@@ -162,21 +207,12 @@ pub unsafe trait MetaCollect<'gc, 'a, T: ?Sized + 'a>: MetaLayout<'a, T> {
 
 macro_rules! impl_sized {
     ($($t:ty $(: ($($bounds:tt)*))?),* $(,)?) => {$(
+        unsafe impl<'a, T: 'a, $($($bounds)*)?> PtrMetadata<'a, T, ()> for $t {
+            fn ptr_metadata(self) {}
+        }
+
         unsafe impl<'a, T: 'a, $($($bounds)*)?> Metadata<'a, T, ()> for $t {
-            #[inline]
-            fn with_addr(self, addr: NonNull<()>) -> NonNull<T> {
-                addr.cast()
-            }
-
-            #[inline]
-            fn addr(ptr: NonNull<T>) -> NonNull<()> {
-                ptr.cast()
-            }
-
-            #[inline]
-            unsafe fn as_ref(ptr: NonNull<T>) -> &'a T {
-                unsafe { ptr.as_ref() }
-            }
+            impl_ptr_metadata!(T);
         }
 
         unsafe impl<'a, T: 'a, $($($bounds)*)?> MetaLayout<'a, T, ()> for $t {
@@ -216,21 +252,14 @@ impl_sized! {
 
 // Implementation for slices.
 
+unsafe impl<'a, T: 'a> PtrMetadata<'a, [T], usize> for usize {
+    fn ptr_metadata(self) -> usize {
+        self
+    }
+}
+
 unsafe impl<'a, T: 'a> Metadata<'a, [T]> for usize {
-    #[inline]
-    fn with_addr(self, addr: NonNull<()>) -> NonNull<[T]> {
-        NonNull::from_raw_parts(addr, self)
-    }
-
-    #[inline]
-    fn addr(ptr: NonNull<[T]>) -> NonNull<()> {
-        ptr.cast()
-    }
-
-    #[inline]
-    unsafe fn as_ref(ptr: NonNull<[T]>) -> &'a [T] {
-        unsafe { ptr.as_ref() }
-    }
+    impl_ptr_metadata!([T]);
 }
 
 unsafe impl<'a, T: 'a> MetaLayout<'a, [T]> for usize {
@@ -262,21 +291,14 @@ where
 
 // Implementation for strings.
 
+unsafe impl<'a> PtrMetadata<'a, str, usize> for usize {
+    fn ptr_metadata(self) -> usize {
+        self
+    }
+}
+
 unsafe impl<'a> Metadata<'a, str> for usize {
-    #[inline]
-    fn with_addr(self, addr: NonNull<()>) -> NonNull<str> {
-        NonNull::from_raw_parts(addr, self)
-    }
-
-    #[inline]
-    fn addr(ptr: NonNull<str>) -> NonNull<()> {
-        ptr.cast()
-    }
-
-    #[inline]
-    unsafe fn as_ref(ptr: NonNull<str>) -> &'a str {
-        unsafe { ptr.as_ref() }
-    }
+    impl_ptr_metadata!(str);
 }
 
 unsafe impl<'a> MetaLayout<'a, str> for usize {
@@ -306,25 +328,22 @@ unsafe impl<'gc, 'a> MetaCollect<'gc, 'a, str> for usize {
 
 // Implementation for trait objects.
 
+unsafe impl<'a, U, Dyn> PtrMetadata<'a, U, DynMetadata<Dyn>> for DynMetadata<Dyn>
+where
+    U: ?Sized + Pointee<Metadata = Self> + 'a,
+    Dyn: ?Sized,
+{
+    fn ptr_metadata(self) -> DynMetadata<Dyn> {
+        self
+    }
+}
+
 unsafe impl<'a, U, Dyn> Metadata<'a, U, DynMetadata<Dyn>> for DynMetadata<Dyn>
 where
     U: ?Sized + Pointee<Metadata = Self> + 'a,
     Dyn: ?Sized,
 {
-    #[inline]
-    fn with_addr(self, addr: NonNull<()>) -> NonNull<U> {
-        NonNull::from_raw_parts(addr, self)
-    }
-
-    #[inline]
-    fn addr(ptr: NonNull<U>) -> NonNull<()> {
-        ptr.cast()
-    }
-
-    #[inline]
-    unsafe fn as_ref(ptr: NonNull<U>) -> &'a U {
-        unsafe { ptr.as_ref() }
-    }
+    impl_ptr_metadata!(U);
 }
 
 unsafe impl<'a, U, Dyn> MetaLayout<'a, U, DynMetadata<Dyn>> for DynMetadata<Dyn>
@@ -345,18 +364,14 @@ where
 
 // Implementation for custom-layout bytes.
 
+unsafe impl<'a> PtrMetadata<'a, [u8], usize> for Layout {
+    fn ptr_metadata(self) -> usize {
+        self.size()
+    }
+}
+
 unsafe impl<'a> Metadata<'a, [u8]> for Layout {
-    fn with_addr(self, addr: NonNull<()>) -> Self::Ptr {
-        NonNull::from_raw_parts(addr, self.size())
-    }
-
-    fn addr(ptr: Self::Ptr) -> NonNull<()> {
-        ptr.cast()
-    }
-
-    unsafe fn as_ref(ptr: Self::Ptr) -> Self::Ref {
-        unsafe { ptr.as_ref() }
-    }
+    impl_ptr_metadata!([u8]);
 }
 
 unsafe impl<'a> MetaLayout<'a, [u8]> for Layout {
@@ -382,18 +397,14 @@ unsafe impl<'gc, 'a> MetaCollect<'gc, 'a, [u8]> for Layout {
     }
 }
 
+unsafe impl<'a> PtrMetadata<'a, [MaybeUninit<u8>], usize> for Layout {
+    fn ptr_metadata(self) -> usize {
+        self.size()
+    }
+}
+
 unsafe impl<'a> Metadata<'a, [MaybeUninit<u8>]> for Layout {
-    fn with_addr(self, addr: NonNull<()>) -> Self::Ptr {
-        NonNull::from_raw_parts(addr, self.size())
-    }
-
-    fn addr(ptr: Self::Ptr) -> NonNull<()> {
-        ptr.cast()
-    }
-
-    unsafe fn as_ref(ptr: Self::Ptr) -> Self::Ref {
-        unsafe { ptr.as_ref() }
-    }
+    impl_ptr_metadata!([MaybeUninit<u8>]);
 }
 
 unsafe impl<'a> MetaLayout<'a, [MaybeUninit<u8>]> for Layout {

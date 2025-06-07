@@ -9,7 +9,9 @@ use std::{
 
 #[test]
 fn custom_layout() {
-    #[derive(Debug, Clone, Copy, PartialEq)]
+    #[derive(Debug, Clone, Copy, PartialEq, PtrMetadata)]
+    #[ptr_metadata(Memory, unsafe(via(self.size as usize)))]
+    #[ptr_metadata(AnotherMemory, unsafe(via(self.size as usize)))]
     struct CompactLayout {
         size: u32,
         align_bit: u8,
@@ -18,26 +20,11 @@ fn custom_layout() {
     #[derive(Collect)]
     struct Memory([MaybeUninit<u8>]);
 
+    #[derive(Collect)]
+    struct AnotherMemory([u8]);
+
     unsafe impl Uninit for Memory {
         type Init = Self;
-    }
-
-    unsafe impl<'a> Metadata<'a, Memory> for CompactLayout {
-        type Ptr = NonNull<Memory>;
-
-        type Ref = &'a Memory;
-
-        fn with_addr(self, addr: NonNull<()>) -> NonNull<Memory> {
-            NonNull::from_raw_parts(addr, self.size as usize)
-        }
-
-        fn addr(ptr: NonNull<Memory>) -> NonNull<()> {
-            ptr.cast()
-        }
-
-        unsafe fn as_ref(ptr: NonNull<Memory>) -> Self::Ref {
-            unsafe { ptr.as_ref() }
-        }
     }
 
     unsafe impl<'a> MetaLayout<'a, Memory> for CompactLayout {
@@ -48,12 +35,12 @@ fn custom_layout() {
         unsafe fn drop_in_place(_: NonNull<Memory>) {}
     }
 
-    unsafe impl<'a, 'gc> MetaCollect<'gc, 'a, Memory> for CompactLayout {
+    unsafe impl<'gc, 'a> MetaCollect<'gc, 'a, Memory> for CompactLayout {
         fn needs_trace(self) -> bool {
             Memory::NEEDS_TRACE
         }
 
-        fn trace<C: Trace<'gc>>(_: Self::Ref, _: &mut C) {}
+        fn trace<C: Trace<'gc>>(_: &'a Memory, _: &mut C) {}
     }
 
     rootless_mutate(|mc| {

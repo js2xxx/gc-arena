@@ -9,6 +9,7 @@ use core::{
     mem::MaybeUninit,
     ops::Deref,
     ptr::{NonNull, Pointee},
+    str::Utf8Error,
 };
 
 use crate::{
@@ -33,7 +34,7 @@ pub use self::{unique::Unique, weak::Weak};
 /// `Gc` pointers may not escape the arena they were born in or be stored inside TLS. This,
 /// combined with correct `Collect` implementations, means that `Gc` pointers will never be
 /// dangling and are always safe to access.
-/// 
+///
 /// # Layout
 ///
 /// The underlying pointer points directly to the value, so it can be safety [transmute]d when
