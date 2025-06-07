@@ -427,6 +427,32 @@ impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: Metadata<'a, T>> Gc<'gc, T, M> {
     }
 }
 
+impl<'gc> Gc<'gc, str> {
+    /// Converts the `Gc` byte slice into a GC'd string slice.
+    ///
+    /// # Errors
+    ///
+    /// If the slice is not valid UTF-8, an error will be returned.
+    pub fn from_utf8(this: Gc<'gc, [u8]>) -> Result<Self, Utf8Error> {
+        match str::from_utf8(&this) {
+            // SAFETY: `this` is guaranteed to be valid UTF-8.
+            Ok(_) => Ok(unsafe { Self::from_utf8_unchecked(this) }),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Converts the `Gc` byte slice into a GC'd string slice without checks.
+    ///
+    /// # Safety
+    ///
+    /// The caller must guarantee that this contains a valid UTF-8 string.
+    pub unsafe fn from_utf8_unchecked(this: Gc<'gc, [u8]>) -> Self {
+        let (ptr, _) = Gc::to_raw_parts(this);
+        // SAFETY: The caller guarantees that this is a valid UTF-8 string.
+        unsafe { Gc::from_raw(ptr) }
+    }
+}
+
 impl<'gc, 'a, 'b, T, U, M, N> PartialEq<Gc<'gc, U, N>> for Gc<'gc, T, M>
 where
     T: PartialEq<U> + ?Sized + 'gc + 'a,

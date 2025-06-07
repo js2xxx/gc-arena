@@ -1,7 +1,7 @@
 use core::{
     alloc::{Layout, LayoutError},
     mem::MaybeUninit,
-    ptr::{self, DynMetadata, NonNull, Pointee},
+    ptr::{DynMetadata, NonNull, Pointee},
 };
 
 use crate::{Collect, collect::Trace};
@@ -344,22 +344,6 @@ where
     Dyn: ?Sized,
 {
     impl_ptr_metadata!(U);
-}
-
-unsafe impl<'a, U, Dyn> MetaLayout<'a, U, DynMetadata<Dyn>> for DynMetadata<Dyn>
-where
-    U: ?Sized + Pointee<Metadata = Self> + 'a,
-    Dyn: ?Sized,
-{
-    fn layout(self) -> Result<Layout, LayoutError> {
-        let ptr: *const U = ptr::from_raw_parts(ptr::null::<()>(), self);
-        // SAFETY: The metadata part of the pointer is valid.
-        Ok(unsafe { Layout::for_value_raw(ptr) })
-    }
-
-    unsafe fn drop_in_place(to_drop: Self::Ptr) {
-        unsafe { to_drop.drop_in_place() };
-    }
 }
 
 // Implementation for custom-layout bytes.
