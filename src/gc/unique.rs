@@ -135,20 +135,20 @@ impl<'gc, T: ?Sized + Uninit + 'gc, M: 'gc> Unique<'gc, T, M> {
         T: 'a,
         M: MetaCollect<'gc, 'a, T>,
     {
-        let ptr = mc.allocate::<T, M, ZEROED>(meta);
+        // SAFETY: The uninitalized state is valid for `T` since `T: Uninit`.
+        let ptr = unsafe { mc.allocate::<T, M, ZEROED>(meta) };
         let ret: Unique<'_, T, M> = Unique { ptr, _invariant: PhantomData };
-        #[cfg(not(miri))]
-        return ret;
         #[cfg(miri)]
-        {
+        if ZEROED {
             let mut ret = ret;
             let addr = Unique::addr_mut(&mut ret);
             // SAFETY: The metadata is valid for this type.
             let size = unsafe { ret.ptr.metadata::<M>().layout().unwrap_unchecked().size() };
             // SAFETY: The memory is uninitialized and valid.
             unsafe { core::ptr::write_bytes::<u8>(addr.as_ptr().cast(), 0, size) };
-            ret
+            return ret;
         }
+        ret
     }
 
     /// Converts to `Unique<'gc, T::Init, M>`, assuming its contents are
@@ -240,7 +240,8 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, T> {
         // The shorthand is used here to avoid an extra assignment to
         // the underlying VTable.
 
-        let ptr = mc.allocate::<T, (), false>(());
+        // SAFETY: We initialize the content with `t`.
+        let ptr = unsafe { mc.allocate::<T, (), false>(()) };
         // SAFETY: `ptr` is a valid uninit pointer to `T`.
         unsafe { ptr.unerase::<T, ()>().write(t) };
         Unique { ptr, _invariant: PhantomData }
@@ -256,14 +257,12 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, T> {
         native::Unsized<Dyn>: MetaCollect<'gc, 'a, T, Ptr = NonNull<T>>,
     {
         let metadata = core::ptr::metadata(&t as &Dyn);
-        let gc_box = mc.allocate::<T, _, false>(native::Unsized(metadata));
-        // SAFETY: `ptr` is a uninit pointer to `Dyn` which can receive a `T`.
-        unsafe { gc_box.unerase::<T, ()>().write(t) };
 
-        Unique {
-            ptr: gc_box,
-            _invariant: PhantomData,
-        }
+        // SAFETY: We initialize the content with `t`.
+        let ptr = unsafe { mc.allocate::<T, _, false>(native::Unsized(metadata)) };
+        // SAFETY: `ptr` is a uninit pointer to `Dyn` which can receive a `T`.
+        unsafe { ptr.unerase::<T, ()>().write(t) };
+        Unique { ptr, _invariant: PhantomData }
     }
 }
 

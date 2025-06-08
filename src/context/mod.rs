@@ -256,11 +256,15 @@ impl Context {
         cx.log_progress("GC: yielding...");
     }
 
-    fn allocate<'gc, 'a, T, M, const ZEROED: bool>(&self, metadata: M, a: &dyn Allocator) -> GcBox
-    where
-        T: 'a + ?Sized,
-        M: MetaCollect<'gc, 'a, T>,
-    {
+    /// # Safety
+    ///
+    /// The caller must initialize the contents of the allocated memory to a
+    /// valid object typed `T` before the returned `GcBox` is swept out.
+    unsafe fn allocate<'gc, 'a, T: 'a + ?Sized, M: MetaCollect<'gc, 'a, T>, const ZEROED: bool>(
+        &self,
+        metadata: M,
+        a: &dyn Allocator,
+    ) -> GcBox {
         let header = GcBoxHeader::new::<T, M>();
         header.set_next(self.all.get());
         header.set_live(true);

@@ -118,13 +118,18 @@ impl<'gc> Mutation<'gc> {
             .forward_barrier_weak(parent.map(|p| p.ptr), child.inner.ptr)
     }
 
+    /// # Safety
+    ///
+    /// The caller must initialize the contents of the allocated memory to a
+    /// valid object typed `T` before the returned `GcBox` is swept out.
     #[inline]
-    pub(crate) fn allocate<'a, T, M, const ZEROED: bool>(&self, metadata: M) -> GcBox
+    pub(crate) unsafe fn allocate<'a, T, M, const ZEROED: bool>(&self, metadata: M) -> GcBox
     where
         T: 'a + ?Sized,
         M: MetaCollect<'gc, 'a, T>,
     {
-        self.context.allocate::<T, M, false>(metadata, self.alloc)
+        // SAFETY: The caller ensures that.
+        unsafe { self.context.allocate::<T, M, false>(metadata, self.alloc) }
     }
 
     #[inline]
