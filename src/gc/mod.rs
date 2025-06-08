@@ -328,9 +328,7 @@ impl<'gc, T: 'gc + ?Sized, M: PtrMetadata<'gc, T>> Gc<'gc, T, M> {
     where
         T: Unlock,
     {
-        Gc::write(mc, self);
-        // SAFETY: see doc-comment.
-        unsafe { Gc::get_ref(self).unlock_unchecked() }
+        Gc::write(mc, self).unlock()
     }
 }
 

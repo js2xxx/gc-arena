@@ -45,7 +45,7 @@ macro_rules! make_lock_wrapper {
 
         impl<T> $locked_type<T> {
             #[inline]
-            pub fn new(t: T) -> $locked_type<T> {
+            pub const fn new(t: T) -> $locked_type<T> {
                 Self { cell: $unlocked_type::new(t) }
             }
 
@@ -75,7 +75,7 @@ macro_rules! make_lock_wrapper {
             /// `], unless the write barrier for the containing [`Gc`] pointer is invoked manually
             /// before collection is triggered.
             #[inline]
-            pub unsafe fn $unsafe_unlock_method(&self) -> &$unlocked_type<T> {
+            pub const unsafe fn $unsafe_unlock_method(&self) -> &$unlocked_type<T> {
                 &self.cell
             }
 
@@ -144,15 +144,39 @@ impl<T: Copy + fmt::Debug> fmt::Debug for Lock<T> {
     }
 }
 
-impl<'gc, T: Copy + 'gc> Gc<'gc, Lock<T>> {
+impl<'gc, 'a, T: Copy + 'gc + 'a, M: PtrMetadata<'a, Lock<T>>> Gc<'gc, Lock<T>, M> {
     #[inline]
     pub fn get(self) -> T {
         self.cell.get()
     }
+}
 
+impl<'gc, T: 'gc, M: PtrMetadata<'gc, Lock<T>>> Gc<'gc, Lock<T>, M> {
     #[inline]
     pub fn set(self, mc: &Mutation<'gc>, t: T) {
         self.unlock(mc).set(t);
+    }
+
+    #[inline]
+    pub fn swap(self, mc: &Mutation<'gc>, other: Self) {
+        self.unlock(mc).swap(other.unlock(mc));
+    }
+
+    #[inline]
+    pub fn replace(self, mc: &Mutation<'gc>, t: T) -> T {
+        self.unlock(mc).replace(t)
+    }
+
+    #[inline]
+    pub fn update(self, mc: &Mutation<'gc>, f: impl FnOnce(T) -> T)
+    where
+        T: Copy,
+    {
+        let t = self.get();
+        let updated = f(t);
+        // Not forwarding `Cell::update` because we doesn't need to unlock the cell
+        // in case of panics from the update function.
+        self.set(mc, updated);
     }
 }
 
@@ -288,6 +312,23 @@ impl<'gc, T: ?Sized + 'gc, M: PtrMetadata<'gc, RefLock<T>>> Gc<'gc, RefLock<T>, 
     #[inline]
     pub fn try_borrow_mut(self, mc: &Mutation<'gc>) -> Result<RefMut<'gc, T>, BorrowMutError> {
         self.unlock(mc).try_borrow_mut()
+    }
+}
+
+impl<'gc, T: 'gc, M: PtrMetadata<'gc, RefLock<T>>> Gc<'gc, RefLock<T>, M> {
+    #[inline]
+    pub fn swap(self, mc: &Mutation<'gc>, other: Self) {
+        self.unlock(mc).swap(other.unlock(mc))
+    }
+
+    #[inline]
+    pub fn replace(self, mc: &Mutation<'gc>, t: T) -> T {
+        self.unlock(mc).replace(t)
+    }
+
+    #[inline]
+    pub fn replace_with(self, mc: &Mutation<'gc>, f: impl FnOnce(&mut T) -> T) -> T {
+        self.unlock(mc).replace_with(f)
     }
 }
 
