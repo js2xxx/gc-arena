@@ -27,8 +27,8 @@ use crate::{
 pub struct DynamicRootSet<'gc>(Gc<'gc, Inner<'gc>>);
 
 unsafe impl<'gc> Collect<'gc> for DynamicRootSet<'gc> {
-    fn trace<T: Trace<'gc>>(&self, cc: &mut T) {
-        cc.trace(&self.0);
+    fn trace<T: Trace<'gc>>(&mut self, cc: &mut T) {
+        cc.trace(&mut self.0);
     }
 }
 
@@ -200,8 +200,8 @@ struct Inner<'gc> {
 }
 
 unsafe impl<'gc> Collect<'gc> for Inner<'gc> {
-    fn trace<T: Trace<'gc>>(&self, cc: &mut T) {
-        cc.trace(&*self.slots.borrow());
+    fn trace<T: Trace<'gc>>(&mut self, cc: &mut T) {
+        cc.trace(&mut *self.slots.borrow_mut());
     }
 }
 
@@ -219,10 +219,10 @@ enum Slot<'gc> {
 }
 
 unsafe impl<'gc> Collect<'gc> for Slot<'gc> {
-    fn trace<T: Trace<'gc>>(&self, cc: &mut T) {
+    fn trace<T: Trace<'gc>>(&mut self, cc: &mut T) {
         match self {
             Slot::Vacant { .. } => {}
-            Slot::Occupied { root, ref_count: _ } => cc.trace_gc(*root),
+            Slot::Occupied { root, ref_count: _ } => cc.trace_gc(root),
         }
     }
 }
@@ -233,8 +233,8 @@ struct Slots<'gc> {
 }
 
 unsafe impl<'gc> Collect<'gc> for Slots<'gc> {
-    fn trace<T: Trace<'gc>>(&self, cc: &mut T) {
-        cc.trace(&self.slots);
+    fn trace<T: Trace<'gc>>(&mut self, cc: &mut T) {
+        cc.trace(&mut self.slots);
     }
 }
 

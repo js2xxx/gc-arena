@@ -22,9 +22,9 @@ impl<'gc, T: 'gc + fmt::Debug> fmt::Debug for IntoIter<'gc, T> {
 }
 
 unsafe impl<'gc, T: Collect<'gc> + 'gc> Collect<'gc> for IntoIter<'gc, T> {
-    fn trace<U: Trace<'gc>>(&self, cc: &mut U) {
-        cc.trace(&self.buf);
-        cc.trace(self.as_slice());
+    fn trace<U: Trace<'gc>>(&mut self, cc: &mut U) {
+        cc.trace(&mut self.buf);
+        cc.trace(self.as_mut_slice());
     }
 }
 

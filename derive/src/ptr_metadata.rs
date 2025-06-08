@@ -131,6 +131,8 @@ pub(crate) fn derive(s: synstructure::Structure) -> TokenStream {
 
                 type Ref = &'a #ty;
 
+                type MutRef = &'a mut #ty;
+
                 #[inline]
                 fn with_addr(self, addr: NonNull<()>) -> NonNull<#ty> {
                     NonNull::from_raw_parts(
@@ -147,6 +149,11 @@ pub(crate) fn derive(s: synstructure::Structure) -> TokenStream {
                 #[inline]
                 unsafe fn as_ref(ptr: NonNull<#ty>) -> &'a #ty {
                     unsafe { ptr.as_ref() }
+                }
+
+                #[inline]
+                unsafe fn as_mut(mut ptr: NonNull<#ty>) -> &'a mut #ty {
+                    unsafe { ptr.as_mut() }
                 }
             }
         }));

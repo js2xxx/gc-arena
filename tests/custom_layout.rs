@@ -41,7 +41,7 @@ fn custom_layout() {
             Memory::NEEDS_TRACE
         }
 
-        fn trace<C: Trace<'gc>>(_: &'a Memory, _: &mut C) {}
+        fn trace<C: Trace<'gc>>(_: &'a mut Memory, _: &mut C) {}
     }
 
     rootless_mutate(|mc| {

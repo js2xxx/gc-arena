@@ -15,14 +15,30 @@ use core::{
 #[cfg(feature = "std")]
 use std::collections::{HashMap, HashSet};
 
-use crate::collect::{Collect, Trace};
+use crate::collect::{Collect, CollectRef, Trace};
+
+unsafe impl<'gc, T: CollectRef<'gc> + ?Sized> Collect<'gc> for &T {
+    const NEEDS_TRACE: bool = <T as CollectRef<'gc>>::NEEDS_TRACE;
+
+    #[inline]
+    fn trace<C: Trace<'gc>>(&mut self, cc: &mut C) {
+        <T as CollectRef<'gc>>::trace_ref(self, cc)
+    }
+}
 
 /// If a type is static, we know that it can never hold `Gc` pointers, so it is
 /// safe to provide a simple empty `Collect` implementation.
 #[macro_export]
 macro_rules! static_collect {
     ($type:ty) => {
-        unsafe impl<'gc> Collect<'gc> for $type
+        unsafe impl<'gc> $crate::collect::Collect<'gc> for $type
+        where
+            $type: 'static,
+        {
+            const NEEDS_TRACE: bool = false;
+        }
+
+        unsafe impl<'gc> $crate::collect::CollectRef<'gc> for $type
         where
             $type: 'static,
         {
@@ -64,216 +80,262 @@ static_collect!(std::ffi::OsString);
 /// contents. Therefore it will likely cause undefined behaviour to read a
 /// garbage collected pointer from the `MaybeUninit`, if it was set in a prior
 /// mutation.
+unsafe impl<'gc, T> CollectRef<'gc> for MaybeUninit<T> {
+    const NEEDS_TRACE: bool = false;
+}
+
 unsafe impl<'gc, T> Collect<'gc> for MaybeUninit<T> {
     const NEEDS_TRACE: bool = false;
 }
 
-/// SAFETY: We know that a `&'static` reference cannot possibly point to `'gc`
-/// data, so it is safe to keep in a rooted objet and we do not have to trace
-/// through it.
-///
-/// HOWEVER, There is an extra bound here that seems superfluous. If we have a
-/// `&'static T`, why do we require `T: 'static`, shouldn't this be implied,
-/// otherwise a `&'static T` would not be well- formed? WELL, there are
-/// currently some neat compiler bugs, observe...
-///
-/// ```rust,compile_fail
-/// let arena = Arena::<Rootable![&'static Gc<'gc, i32>]>::new(Default::default(), |mc| {
-///     Box::leak(Box::new(Gc::new(mc, 4)))
-/// });
-/// ```
-///
-/// At the time of this writing, without the extra `T: static` bound, the above
-/// code compiles and produces an arena with a reachable but un-traceable
-/// `Gc<'gc, i32>`, and this is unsound. This *is* ofc the stored type of the
-/// root, since the Arena is actually constructing a `&'static Gc<'static, i32>`
-/// as the root object, but this should still not rightfully compile due to the
-/// signature of the constructor callback passed to `Arena::new`. In fact, the
-/// 'static lifetime is a red herring, it is possible to change the internals of
-/// `Arena` such that the 'gc lifetime given to the callback is *not* 'static,
-/// and the problem persists.
-///
-/// It should not be required to have this extra lifetime bound, and yet! It
-/// fixes the above issue perfectly and the given example of unsoundness no
-/// longer compiles. So, until this rustc bug is fixed...
-///
-/// DO NOT REMOVE THIS EXTRA `T: 'static` BOUND
-unsafe impl<'gc, T: ?Sized + 'static> Collect<'gc> for &'static T {
-    const NEEDS_TRACE: bool = false;
-}
+static_collect!(Global);
 
-unsafe impl<'gc> Collect<'gc> for Global {
-    const NEEDS_TRACE: bool = false;
-}
+macro_rules! forward_collect {
+    (
+        $(#[$m:meta])*
+        $type:ty = ($($params:tt)*) where ($($bounds:tt)*) / ($($bounds_ref:tt)*) {
+            const $NEEDS_TRACE:ident: bool = $needs_trace:expr;
+            fn trace = |$self:ident, $cc:ident|
+            $trace:block / $trace_ref:block
+        }
+    ) => {
+        $(#[$m])*
+        unsafe impl<'gc, $($params)*> $crate::collect::Collect<'gc> for $type
+        where
+            $($bounds)*
+        {
+            const $NEEDS_TRACE: bool = $needs_trace;
 
-unsafe impl<'gc, T, A> Collect<'gc> for Box<T, A>
-where
-    T: Collect<'gc> + ?Sized,
-    A: Collect<'gc> + Allocator,
-{
-    const NEEDS_TRACE: bool = T::NEEDS_TRACE || A::NEEDS_TRACE;
+            #[inline]
+            fn trace<Cc: $crate::collect::Trace<'gc>>(&mut self, cc: &mut Cc) {
+                (|$self: &mut Self, $cc: &mut Cc| $trace)(self, cc)
+            }
+        }
 
-    #[inline]
-    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
-        cc.trace(&**self);
-        cc.trace(Box::allocator(self));
-    }
-}
+        $(#[$m])*
+        unsafe impl<'gc, $($params)*> $crate::collect::CollectRef<'gc> for $type
+        where
+            $($bounds_ref)*
+        {
+            const $NEEDS_TRACE: bool = $needs_trace;
 
-unsafe impl<'gc, T: Collect<'gc>> Collect<'gc> for [T] {
-    const NEEDS_TRACE: bool = T::NEEDS_TRACE;
-
-    #[inline]
-    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
-        self.iter().for_each(|t| cc.trace(t));
-    }
-}
-
-unsafe impl<'gc, T: Collect<'gc>> Collect<'gc> for Option<T> {
-    const NEEDS_TRACE: bool = T::NEEDS_TRACE;
-
-    #[inline]
-    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
-        if let Some(t) = self.as_ref() {
-            cc.trace(t)
+            #[inline]
+            fn trace_ref<Cc: $crate::collect::Trace<'gc>>(&self, cc: &mut Cc) {
+                (|$self: &Self, $cc: &mut Cc| $trace_ref)(self, cc)
+            }
         }
     }
 }
 
-unsafe impl<'gc, T: Collect<'gc>, E: Collect<'gc>> Collect<'gc> for Result<T, E> {
-    const NEEDS_TRACE: bool = T::NEEDS_TRACE || E::NEEDS_TRACE;
-
-    #[inline]
-    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
-        match self {
-            Ok(r) => cc.trace(r),
-            Err(e) => cc.trace(e),
+forward_collect! {
+    Box<T, A> = (T: ?Sized, A: Allocator + CollectRef<'gc>)
+        where (T: Collect<'gc>) / (T: CollectRef<'gc>)
+    {
+        const NEEDS_TRACE: bool = T::NEEDS_TRACE || A::NEEDS_TRACE;
+        fn trace = |this, cc| {
+            cc.trace(&mut **this);
+            cc.trace_ref(Box::allocator(this));
+        } / {
+            cc.trace_ref(&**this);
+            cc.trace_ref(Box::allocator(this));
         }
     }
 }
 
-unsafe impl<'gc, T: Collect<'gc>, A: Collect<'gc> + Allocator> Collect<'gc> for Vec<T, A> {
-    const NEEDS_TRACE: bool = T::NEEDS_TRACE || A::NEEDS_TRACE;
-
-    #[inline]
-    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
-        self.iter().for_each(|v| cc.trace(v));
-        cc.trace(self.allocator());
+forward_collect! {
+    [T] = (T) where (T: Collect<'gc>) / (T: CollectRef<'gc>) {
+        const NEEDS_TRACE: bool = T::NEEDS_TRACE;
+        fn trace = |this, cc| {
+            this.iter_mut().for_each(|t| cc.trace(t));
+        } / {
+            this.iter().for_each(|t| cc.trace_ref(t));
+        }
     }
 }
 
-unsafe impl<'gc, T: Collect<'gc>, A: Collect<'gc> + Allocator> Collect<'gc> for VecDeque<T, A> {
-    const NEEDS_TRACE: bool = T::NEEDS_TRACE || A::NEEDS_TRACE;
+forward_collect! {
+    Option<T> = (T) where (T: Collect<'gc>) / (T: CollectRef<'gc>) {
+        const NEEDS_TRACE: bool = T::NEEDS_TRACE;
+        fn trace = |this, cc| {
+            if let Some(t) = this.as_mut() {
+                cc.trace(t);
+            }
+        } / {
+            if let Some(t) = this.as_ref() {
+                cc.trace_ref(t);
+            }
+        }
+    }
+}
 
-    #[inline]
-    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
-        self.iter().for_each(|t| cc.trace(t));
-        cc.trace(self.allocator());
+forward_collect! {
+    Result<T, E> = (T, E)
+        where (T: Collect<'gc>, E: Collect<'gc>) / (T: CollectRef<'gc>, E: CollectRef<'gc>)
+    {
+        const NEEDS_TRACE: bool = T::NEEDS_TRACE || E::NEEDS_TRACE;
+        fn trace = |this, cc| {
+            match this {
+                Ok(r) => cc.trace(r),
+                Err(e) => cc.trace(e),
+            }
+        } / {
+            match this {
+                Ok(r) => cc.trace_ref(r),
+                Err(e) => cc.trace_ref(e),
+            }
+        }
+    }
+}
+
+forward_collect! {
+    Vec<T, A> = (T, A: Allocator + CollectRef<'gc>)
+        where (T: Collect<'gc>) / (T: CollectRef<'gc>)
+    {
+        const NEEDS_TRACE: bool = T::NEEDS_TRACE || A::NEEDS_TRACE;
+        fn trace = |this, cc| {
+            this.iter_mut().for_each(|t| cc.trace(t));
+            cc.trace_ref(this.allocator());
+        } / {
+            this.iter().for_each(|t| cc.trace_ref(t));
+            cc.trace_ref(this.allocator());
+        }
+    }
+}
+
+forward_collect! {
+    VecDeque<T, A> = (T, A: Allocator + CollectRef<'gc>)
+        where (T: Collect<'gc>) / (T: CollectRef<'gc>)
+    {
+        const NEEDS_TRACE: bool = T::NEEDS_TRACE || A::NEEDS_TRACE;
+        fn trace = |this, cc| {
+            this.iter_mut().for_each(|t| cc.trace(t));
+            cc.trace_ref(this.allocator());
+        } / {
+            this.iter().for_each(|t| cc.trace_ref(t));
+            cc.trace_ref(this.allocator());
+        }
     }
 }
 
 #[cfg(feature = "std")]
-unsafe impl<'gc, K, V, S> Collect<'gc> for HashMap<K, V, S>
-where
-    K: Collect<'gc>,
-    V: Collect<'gc>,
-    S: 'static,
-{
-    const NEEDS_TRACE: bool = K::NEEDS_TRACE || V::NEEDS_TRACE;
-
-    #[inline]
-    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
-        for (k, v) in self {
-            cc.trace(k);
-            cc.trace(v);
+forward_collect! {
+    HashMap<K, V, S> = (K: CollectRef<'gc>, V, S: 'static)
+        where (V: Collect<'gc>) / (V: CollectRef<'gc>)
+    {
+        const NEEDS_TRACE: bool = K::NEEDS_TRACE || V::NEEDS_TRACE;
+        fn trace = |this, cc| {
+            for (k, v) in this {
+                cc.trace_ref(k);
+                cc.trace(v);
+            }
+        } / {
+            for (k, v) in this {
+                cc.trace_ref(k);
+                cc.trace_ref(v);
+            }
         }
     }
 }
 
 #[cfg(feature = "std")]
-unsafe impl<'gc, T, S> Collect<'gc> for HashSet<T, S>
-where
-    T: Collect<'gc>,
-    S: 'static,
-{
-    const NEEDS_TRACE: bool = T::NEEDS_TRACE;
-
-    #[inline]
-    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
-        self.iter().for_each(|v| cc.trace(v));
+forward_collect! {
+    HashSet<T, S> = (T: CollectRef<'gc>, S: 'static) where () / () {
+        const NEEDS_TRACE: bool = T::NEEDS_TRACE;
+        fn trace = |this, cc| {
+            this.iter().for_each(|v| cc.trace_ref(v));
+        } / {
+            this.iter().for_each(|v| cc.trace_ref(v));
+        }
     }
 }
 
-unsafe impl<'gc, T: Collect<'gc>, A: Collect<'gc> + Allocator> Collect<'gc> for BinaryHeap<T, A> {
-    const NEEDS_TRACE: bool = T::NEEDS_TRACE || A::NEEDS_TRACE;
-
-    #[inline]
-    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
-        self.iter().for_each(|v| cc.trace(v));
-        cc.trace(self.allocator());
+forward_collect! {
+    BinaryHeap<T, A> = (T: CollectRef<'gc>, A: Allocator + CollectRef<'gc>)
+        where () / ()
+    {
+        const NEEDS_TRACE: bool = T::NEEDS_TRACE || A::NEEDS_TRACE;
+        fn trace = |this, cc| {
+            this.iter().for_each(|v| cc.trace_ref(v));
+            cc.trace_ref(this.allocator());
+        } / {
+            this.iter().for_each(|v| cc.trace_ref(v));
+            cc.trace_ref(this.allocator());
+        }
     }
 }
 
 // FIXME: Add allocator tracing for `alloc::collections::*` once their APIs are
 // exposed.
 
-unsafe impl<'gc, T: Collect<'gc>> Collect<'gc> for LinkedList<T> {
-    const NEEDS_TRACE: bool = T::NEEDS_TRACE;
-
-    #[inline]
-    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
-        self.iter().for_each(|t| cc.trace(t));
-    }
-}
-
-unsafe impl<'gc, K, V> Collect<'gc> for BTreeMap<K, V>
-where
-    K: Collect<'gc>,
-    V: Collect<'gc>,
-{
-    const NEEDS_TRACE: bool = K::NEEDS_TRACE || V::NEEDS_TRACE;
-
-    #[inline]
-    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
-        for (k, v) in self {
-            cc.trace(k);
-            cc.trace(v);
+forward_collect! {
+    LinkedList<T> = (T) where (T: Collect<'gc>) / (T: CollectRef<'gc>) {
+        const NEEDS_TRACE: bool = T::NEEDS_TRACE;
+        fn trace = |this, cc| {
+            this.iter_mut().for_each(|t| cc.trace(t));
+        } / {
+            this.iter().for_each(|t| cc.trace_ref(t));
         }
     }
 }
 
-unsafe impl<'gc, T> Collect<'gc> for BTreeSet<T>
-where
-    T: Collect<'gc>,
-{
-    const NEEDS_TRACE: bool = T::NEEDS_TRACE;
-
-    #[inline]
-    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
-        self.iter().for_each(|v| cc.trace(v));
+forward_collect! {
+    BTreeMap<K, V> = (K: CollectRef<'gc>, V)
+        where (V: Collect<'gc>) / (V: CollectRef<'gc>)
+    {
+        const NEEDS_TRACE: bool = K::NEEDS_TRACE || V::NEEDS_TRACE;
+        fn trace = |this, cc| {
+            for (k, v) in this {
+                cc.trace_ref(k);
+                cc.trace(v);
+            }
+        } / {
+            for (k, v) in this {
+                cc.trace_ref(k);
+                cc.trace_ref(v);
+            }
+        }
     }
 }
 
-unsafe impl<'gc, T: ?Sized + Collect<'gc>, A: Collect<'gc> + Allocator> Collect<'gc> for Rc<T, A> {
-    const NEEDS_TRACE: bool = T::NEEDS_TRACE || A::NEEDS_TRACE;
+forward_collect! {
+    BTreeSet<T> = (T: CollectRef<'gc>) where () / () {
+        const NEEDS_TRACE: bool = T::NEEDS_TRACE;
+        fn trace = |this, cc| {
+            this.iter().for_each(|v| cc.trace_ref(v));
+        } / {
+            this.iter().for_each(|v| cc.trace_ref(v));
+        }
+    }
+}
 
-    #[inline]
-    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
-        cc.trace(&**self);
-        cc.trace(Rc::allocator(self));
+forward_collect! {
+    Rc<T, A> = (T: CollectRef<'gc>, A: Allocator + CollectRef<'gc>)
+        where () / ()
+    {
+        const NEEDS_TRACE: bool = T::NEEDS_TRACE || A::NEEDS_TRACE;
+        fn trace = |this, cc| {
+            cc.trace_ref(&**this);
+            cc.trace_ref(Rc::allocator(this));
+        } / {
+            cc.trace_ref(&**this);
+            cc.trace_ref(Rc::allocator(this));
+        }
     }
 }
 
 #[cfg(target_has_atomic = "ptr")]
-unsafe impl<'gc, T: ?Sized + Collect<'gc>, A: Collect<'gc> + Allocator> Collect<'gc>
-    for alloc::sync::Arc<T, A>
-{
-    const NEEDS_TRACE: bool = T::NEEDS_TRACE || A::NEEDS_TRACE;
-
-    #[inline]
-    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
-        cc.trace(&**self);
-        cc.trace(alloc::sync::Arc::allocator(self))
+forward_collect! {
+    alloc::sync::Arc<T, A> = (T: CollectRef<'gc>, A: Allocator + CollectRef<'gc>)
+        where () / ()
+    {
+        const NEEDS_TRACE: bool = T::NEEDS_TRACE || A::NEEDS_TRACE;
+        fn trace = |this, cc| {
+            cc.trace_ref(&**this);
+            cc.trace_ref(alloc::sync::Arc::allocator(this));
+        } / {
+            cc.trace_ref(&**this);
+            cc.trace_ref(alloc::sync::Arc::allocator(this));
+        }
     }
 }
 
@@ -281,21 +343,35 @@ unsafe impl<'gc, T: 'static> Collect<'gc> for Cell<T> {
     const NEEDS_TRACE: bool = false;
 }
 
+unsafe impl<'gc, T: 'static> CollectRef<'gc> for Cell<T> {
+    const NEEDS_TRACE: bool = false;
+}
+
 unsafe impl<'gc, T: 'static> Collect<'gc> for RefCell<T> {
     const NEEDS_TRACE: bool = false;
 }
 
-// SAFETY: `PhantomData` is a ZST, and therefore doesn't store anything
-unsafe impl<'gc, T> Collect<'gc> for PhantomData<T> {
+unsafe impl<'gc, T: 'static> CollectRef<'gc> for RefCell<T> {
     const NEEDS_TRACE: bool = false;
 }
 
-unsafe impl<'gc, T: Collect<'gc>, const N: usize> Collect<'gc> for [T; N] {
-    const NEEDS_TRACE: bool = T::NEEDS_TRACE;
+// SAFETY: `PhantomData` is a ZST, and therefore doesn't store anything
+unsafe impl<'gc, T: ?Sized> Collect<'gc> for PhantomData<T> {
+    const NEEDS_TRACE: bool = false;
+}
 
-    #[inline]
-    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
-        self.iter().for_each(|t| cc.trace(t));
+unsafe impl<'gc, T: ?Sized> CollectRef<'gc> for PhantomData<T> {
+    const NEEDS_TRACE: bool = false;
+}
+
+forward_collect! {
+    [T; N] = (T, const N: usize) where (T: Collect<'gc>) / (T: CollectRef<'gc>) {
+        const NEEDS_TRACE: bool = T::NEEDS_TRACE;
+        fn trace = |this, cc| {
+            this.iter_mut().for_each(|t| cc.trace(t));
+        } / {
+            this.iter().for_each(|t| cc.trace_ref(t));
+        }
     }
 }
 
@@ -304,19 +380,27 @@ macro_rules! impl_tuple {
         unsafe impl<'gc> Collect<'gc> for () {
             const NEEDS_TRACE: bool = false;
         }
+
+        unsafe impl<'gc> CollectRef<'gc> for () {
+            const NEEDS_TRACE: bool = false;
+        }
     );
 
     ($($name:ident)+) => (
-        unsafe impl<'gc, $($name,)*> Collect<'gc> for ($($name,)*)
-            where $($name: Collect<'gc>,)*
-        {
-            const NEEDS_TRACE: bool = false $(|| $name::NEEDS_TRACE)*;
+        forward_collect! {
+            #[allow(unused_parens, non_snake_case)]
+            (($($name,)*)) = ($($name,)*)
+                where ($($name: Collect<'gc>,)*) / ($($name: CollectRef<'gc>,)*)
+            {
+                const NEEDS_TRACE: bool = false $(|| $name::NEEDS_TRACE)*;
 
-            #[allow(non_snake_case)]
-            #[inline]
-            fn trace<TR: Trace<'gc> >(&self, cc: &mut TR) {
-                let ($($name,)*) = self;
-                $(cc.trace($name);)*
+                fn trace = |this, cc| {
+                    let ($($name,)*) = this;
+                    $(cc.trace($name);)*
+                } / {
+                    let ($($name,)*) = this;
+                    $(cc.trace_ref($name);)*
+                }
             }
         }
     );

@@ -356,7 +356,7 @@ where
         unsafe {
             let alloc = core::ptr::from_ref(self.context.allocator());
             self.context
-                .do_collection(&self.root, RunUntil::PayDebt, Stop::Full, &*alloc);
+                .do_collection(&mut self.root, RunUntil::PayDebt, Stop::Full, &*alloc);
         }
     }
 
@@ -376,8 +376,12 @@ where
     pub fn mark_debt(&mut self) -> Option<MarkedArena<'_, R, A>> {
         unsafe {
             let alloc = core::ptr::from_ref(self.context.allocator());
-            self.context
-                .do_collection(&self.root, RunUntil::PayDebt, Stop::FullyMarked, &*alloc);
+            self.context.do_collection(
+                &mut self.root,
+                RunUntil::PayDebt,
+                Stop::FullyMarked,
+                &*alloc,
+            );
         }
 
         if self.context.phase() == Phase::Mark && !self.context.gray_remaining() {
@@ -403,7 +407,7 @@ where
         unsafe {
             let alloc = core::ptr::from_ref(self.context.allocator());
             self.context
-                .do_collection(&self.root, RunUntil::Stop, Stop::FullyMarked, &*alloc);
+                .do_collection(&mut self.root, RunUntil::Stop, Stop::FullyMarked, &*alloc);
         }
 
         if self.context.phase() == Phase::Mark && !self.context.gray_remaining() {
@@ -430,8 +434,12 @@ where
         unsafe {
             let alloc = core::ptr::from_ref(self.context.allocator());
 
-            self.context
-                .do_collection(&self.root, RunUntil::PayDebt, Stop::FinishCycle, &*alloc);
+            self.context.do_collection(
+                &mut self.root,
+                RunUntil::PayDebt,
+                Stop::FinishCycle,
+                &*alloc,
+            );
         }
     }
 
@@ -445,7 +453,7 @@ where
         unsafe {
             let alloc = core::ptr::from_ref(self.context.allocator());
             self.context
-                .do_collection(&self.root, RunUntil::Stop, Stop::FinishCycle, &*alloc);
+                .do_collection(&mut self.root, RunUntil::Stop, Stop::FinishCycle, &*alloc);
         }
     }
 }
@@ -484,9 +492,12 @@ where
     pub fn start_sweeping(self) {
         unsafe {
             let alloc = core::ptr::from_ref(self.0.context.allocator());
-            self.0
-                .context
-                .do_collection(&self.0.root, RunUntil::Stop, Stop::AtSweep, &*alloc);
+            (self.0.context).do_collection(
+                &mut self.0.root,
+                RunUntil::Stop,
+                Stop::AtSweep,
+                &*alloc,
+            );
         }
         assert_eq!(self.0.context.phase(), Phase::Sweep);
     }

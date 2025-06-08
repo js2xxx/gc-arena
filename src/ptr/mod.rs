@@ -63,8 +63,11 @@ pub unsafe trait Metadata<'a, T: ?Sized + 'a>: Copy + PartialEq {
     /// The associated pointer type.
     type Ptr: Copy;
 
-    /// The associated reference type.
+    /// The associated immutable reference type.
     type Ref: Copy;
+
+    /// The associated mutable reference type.
+    type MutRef;
 
     /// Creates a pointer from the given address and metadata.
     ///
@@ -88,6 +91,19 @@ pub unsafe trait Metadata<'a, T: ?Sized + 'a>: Copy + PartialEq {
     /// [convertible to a reference]:
     /// https://doc.rust-lang.org/nightly/core/ptr/index.html#pointer-to-reference-conversion
     unsafe fn as_ref(ptr: Self::Ptr) -> Self::Ref;
+
+    /// Returns a mutable reference to the pointed value.
+    ///    
+    /// This function is equivalent to [`NonNull::as_mut`].
+    ///
+    /// # Safety
+    ///
+    /// The pointer must be [convertible to a mutable reference], in the context
+    /// of the inherited pointer-like equivalence.
+    ///
+    /// [convertible to a mutable reference]:
+    /// https://doc.rust-lang.org/nightly/core/ptr/index.html#pointer-to-mutable-reference-conversion
+    unsafe fn as_mut(ptr: Self::Ptr) -> Self::MutRef;
 }
 
 /// A trait that implies the [`Metadata`] trait for built-in pointer types.
@@ -116,7 +132,7 @@ pub unsafe trait Metadata<'a, T: ?Sized + 'a>: Copy + PartialEq {
 ///
 /// [dereferencing GC pointers]: crate::gc::Gc
 pub unsafe trait PtrMetadata<'a, T: ?Sized + 'a>:
-    Metadata<'a, T, Ptr = NonNull<T>, Ref = &'a T>
+    Metadata<'a, T, Ptr = NonNull<T>, Ref = &'a T, MutRef = &'a mut T>
 {
     /// Returns a valid pointer metadata of the pointee type.
     fn ptr_metadata(self) -> PtrMeta<T>;
@@ -130,6 +146,8 @@ macro_rules! impl_ptr_metadata {
 
         type Ref = &'a $ty;
 
+        type MutRef = &'a mut $ty;
+
         fn with_addr(self, addr: NonNull<()>) -> NonNull<$ty> {
             NonNull::<$ty>::from_raw_parts(addr, PtrMetadata::<'a, $ty>::ptr_metadata(self))
         }
@@ -142,6 +160,11 @@ macro_rules! impl_ptr_metadata {
         #[inline]
         unsafe fn as_ref(ptr: NonNull<$ty>) -> &'a $ty {
             unsafe { ptr.as_ref() }
+        }
+
+        #[inline]
+        unsafe fn as_mut(mut ptr: NonNull<$ty>) -> &'a mut $ty {
+            unsafe { ptr.as_mut() }
         }
     };
 }
@@ -190,7 +213,7 @@ pub unsafe trait MetaCollect<'gc, 'a, T: ?Sized + 'a>: MetaLayout<'a, T> {
     fn needs_trace(self) -> bool;
 
     /// Traces the pointee type via a generalized reference.
-    fn trace<C: Trace<'gc>>(t: Self::Ref, cc: &mut C);
+    fn trace<C: Trace<'gc>>(t: Self::MutRef, cc: &mut C);
 }
 
 // Implementation for sized types.
@@ -230,7 +253,7 @@ macro_rules! impl_sized {
             }
 
             #[inline]
-            fn trace<C: Trace<'gc>>(t: &'a T, cc: &mut C) {
+            fn trace<C: Trace<'gc>>(t: &'a mut T, cc: &mut C) {
                 t.trace(cc);
             }
         }
@@ -273,7 +296,7 @@ where
     }
 
     #[inline]
-    fn trace<C: Trace<'gc>>(t: &'a [T], cc: &mut C) {
+    fn trace<C: Trace<'gc>>(t: &'a mut [T], cc: &mut C) {
         t.trace(cc);
     }
 }
@@ -306,7 +329,7 @@ unsafe impl<'gc, 'a> MetaCollect<'gc, 'a, str> for usize {
     }
 
     #[inline]
-    fn trace<C: Trace<'gc>>(_: &'a str, _: &mut C) {
+    fn trace<C: Trace<'gc>>(_: &'a mut str, _: &mut C) {
         // Strings are just arrays of bytes, which doesn't need trace.
     }
 }
@@ -361,7 +384,7 @@ unsafe impl<'gc, 'a> MetaCollect<'gc, 'a, [u8]> for Layout {
     }
 
     #[inline]
-    fn trace<C: Trace<'gc>>(_: &'a [u8], _: &mut C) {
+    fn trace<C: Trace<'gc>>(_: &'a mut [u8], _: &mut C) {
         // Bytes are just arrays of bytes, which doesn't need trace.
     }
 }
@@ -394,7 +417,7 @@ unsafe impl<'gc, 'a> MetaCollect<'gc, 'a, [MaybeUninit<u8>]> for Layout {
     }
 
     #[inline]
-    fn trace<C: Trace<'gc>>(_: &'a [MaybeUninit<u8>], _: &mut C) {
+    fn trace<C: Trace<'gc>>(_: &'a mut [MaybeUninit<u8>], _: &mut C) {
         // Bytes are just arrays of bytes, which doesn't need trace.
     }
 }

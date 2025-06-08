@@ -34,6 +34,15 @@ pub use static_::Static;
 ///   4. Structures consisting of `&'gc T` or `&'gc mut T` must not be
 ///      `Collect<'gc>` unless their backing GC pointers are collected at the
 ///      same call site.
+///   5. Dereferencing `Gc` pointers is forbidden inside `Collect::trace`. This
+///      includes [`Gc::get_ref`], [`GcLock::get`], [`GcRefLock::borrow`], and
+///      other methods that may (in)directly dereference the pointer. This is
+///      because the operation would create new references that aliases with the
+///      currect object being traced, which would break the mutable xor shared
+///      invariant.
+///
+/// [`GcLock::get`]: crate::lock::GcLock::get
+/// [`GcRefLock::borrow`]: crate::lock::GcRefLock::borrow
 pub unsafe trait Collect<'gc> {
     /// As an optimization, if this type can never hold a `Gc` pointer and
     /// `trace` is unnecessary to call, you may set this to `false`. The
@@ -61,7 +70,35 @@ pub unsafe trait Collect<'gc> {
     /// when manually implementing `Collect`.
     #[inline]
     #[allow(unused_variables)]
-    fn trace<T: Trace<'gc>>(&self, cc: &mut T) {}
+    fn trace<T: Trace<'gc>>(&mut self, cc: &mut T) {}
+}
+
+/// A variant of [`Collect`] that is used for types that takes a reference to
+/// itself. A `'static` type that implements `Collect`, or a type that forwards
+/// the `Collect` trait to their generic fields should also implement this
+/// trait.
+///
+/// Note that the safety requirement for `CollectRef` is no less strict than
+/// `Collect` itself.
+///
+/// # Safety
+///
+/// See the [safety notice] on `Collect`.
+///
+/// [safety notice]: Collect#safety
+pub unsafe trait CollectRef<'gc> {
+    /// As an optimization, if this type can never hold a `Gc` pointer and
+    /// `trace` is unnecessary to call, you may set this to `false`. The
+    /// default value is `true`, signaling that `Collect::trace` must be
+    /// called.
+    const NEEDS_TRACE: bool = false;
+
+    /// Like [`Collect::trace`], *must* call [`Trace::trace_gc`] (resp.
+    /// [`Trace::trace_weak`]) on all directly owned [`Gc`] (resp. [`Weak`])
+    /// pointers.
+    #[inline]
+    #[allow(unused_variables)]
+    fn trace_ref<T: Trace<'gc>>(&self, cc: &mut T) {}
 }
 
 /// The trait that is passed to the [`Collect::trace`] method.
@@ -72,15 +109,15 @@ pub unsafe trait Collect<'gc> {
 ///
 /// This trait is not itself unsafe, but implementers of [`Collect`] *must*
 /// uphold the safety guarantees of [`Collect`] when using this trait.
-pub trait Trace<'gc> {
+pub trait Trace<'gc>: crate::sealed::Sealed {
     /// Trace a [`Gc`] pointer (of any real type).
-    fn trace_gc<T: ?Sized + 'gc, M: 'gc>(&mut self, gc: Gc<'gc, T, M>);
+    fn trace_gc<T: ?Sized + 'gc, M: 'gc>(&mut self, gc: &mut Gc<'gc, T, M>);
 
     /// Trace a [`Weak`] pointer (of any real type).
-    fn trace_weak<T: ?Sized + 'gc, M: 'gc>(&mut self, gc: Weak<'gc, T, M>);
+    fn trace_weak<T: ?Sized + 'gc, M: 'gc>(&mut self, gc: &mut Weak<'gc, T, M>);
 
     /// Trace a [`Unique`] pointer (of any real type).
-    fn trace_unique<T: ?Sized + 'gc, M: 'gc>(&mut self, gc: &Unique<'gc, T, M>);
+    fn trace_unique<T: ?Sized + 'gc, M: 'gc>(&mut self, gc: &mut Unique<'gc, T, M>);
 
     /// This is a convenience method that calls [`Collect::trace`] but
     /// automatically adds a [`Collect::NEEDS_TRACE`] check around it.
@@ -94,12 +131,25 @@ pub trait Trace<'gc> {
     /// There is generally no need for custom `Trace` implementations to
     /// override this method.
     #[inline]
-    fn trace<C: Collect<'gc> + ?Sized>(&mut self, value: &C)
+    fn trace<C: Collect<'gc> + ?Sized>(&mut self, value: &mut C)
     where
         Self: Sized,
     {
         if C::NEEDS_TRACE {
             value.trace(self);
+        }
+    }
+
+    /// Like [`Trace::trace`], this is a convenience method that calls
+    /// [`CollectRef::trace_ref`] but automatically adds a
+    /// [`CollectRef::NEEDS_TRACE`] check around it.
+    #[inline]
+    fn trace_ref<C: CollectRef<'gc> + ?Sized>(&mut self, value: &C)
+    where
+        Self: Sized,
+    {
+        if C::NEEDS_TRACE {
+            value.trace_ref(self);
         }
     }
 }

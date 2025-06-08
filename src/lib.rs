@@ -27,6 +27,12 @@ pub mod vec;
 #[cfg(feature = "hashbrown")]
 mod hashbrown;
 
+mod sealed {
+    /// Forbids implementing some trait for downstream types to ensure
+    /// soundness.
+    pub trait Sealed {}
+}
+
 #[doc(hidden)]
 pub use gc_arena_derive::__unelide_lifetimes;
 

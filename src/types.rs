@@ -352,7 +352,7 @@ impl CollectVTable {
                 GcBox::box_layout::<T, M>(erased.metadata::<M>()).unwrap_unchecked()
             },
             drop_value: |erased| unsafe { M::drop_in_place(erased.unerase::<T, M>()) },
-            trace_value: |erased, cc| M::trace(unsafe { M::as_ref(erased.unerase::<T, M>()) }, cc),
+            trace_value: |erased, cc| M::trace(unsafe { M::as_mut(erased.unerase::<T, M>()) }, cc),
         }
     }
 }

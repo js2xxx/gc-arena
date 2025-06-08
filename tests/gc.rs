@@ -602,7 +602,7 @@ fn okay_panic() {
     }
 
     unsafe impl<'gc> Collect<'gc> for Test<'gc> {
-        fn trace<T: Trace<'gc>>(&self, cc: &mut T) {
+        fn trace<T: Trace<'gc>>(&mut self, cc: &mut T) {
             let panics = self.panic_count.get();
             if panics > 0 {
                 self.panic_count.set(panics - 1);
@@ -989,9 +989,9 @@ fn barriers() {
     unsafe impl<'gc, S: Collect<'gc>, W: Collect<'gc>> Collect<'gc> for Node<'gc, S, W> {
         const NEEDS_TRACE: bool = true;
 
-        fn trace<T: Trace<'gc>>(&self, cc: &mut T) {
-            cc.trace(&self.strong_child.get());
-            cc.trace(&self.weak_child.get());
+        fn trace<T: Trace<'gc>>(&mut self, cc: &mut T) {
+            cc.trace(self.strong_child.get_mut());
+            cc.trace(self.weak_child.get_mut());
         }
     }
 
@@ -1172,6 +1172,26 @@ fn arena_move() {
     arena.finish_cycle();
 
     drop_(arena);
+}
+
+#[test]
+fn self_ref() {
+    use gc_arena::GcLock;
+
+    #[derive(Collect)]
+    struct Test<'gc> {
+        gc: GcLock<'gc, Option<Gc<'gc, Self>>>,
+    }
+
+    let mut arena = Arena::<Rootable![Option<Gc<'_, Test<'_>>>]>::new(|mc| {
+        Some(Gc::new(mc, Test { gc: Gc::new(mc, Lock::new(None)) }))
+    });
+
+    arena.mutate(|mc, &test| test.unwrap().gc.set(mc, test));
+    arena.finish_cycle();
+
+    arena.mutate_root(|_, test| *test = None);
+    arena.finish_cycle();
 }
 
 #[test]

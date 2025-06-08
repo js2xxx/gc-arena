@@ -47,9 +47,9 @@ pub struct Vec<'gc, T: 'gc> {
 unsafe impl<'gc, T: 'gc + Collect<'gc>> Collect<'gc> for Vec<'gc, T> {
     const NEEDS_TRACE: bool = true;
 
-    fn trace<U: Trace<'gc>>(&self, cc: &mut U) {
-        cc.trace(&self.buf);
-        cc.trace(self.deref());
+    fn trace<U: Trace<'gc>>(&mut self, cc: &mut U) {
+        cc.trace(&mut self.buf);
+        cc.trace(self.deref_mut());
     }
 }
 

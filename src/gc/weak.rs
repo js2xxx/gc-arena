@@ -33,8 +33,8 @@ impl<'gc, T: ?Sized + 'gc, M: 'gc> Debug for Weak<'gc, T, M> {
 
 unsafe impl<'gc, T: ?Sized + 'gc, M: 'gc> Collect<'gc> for Weak<'gc, T, M> {
     #[inline]
-    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
-        cc.trace_weak(*self)
+    fn trace<C: Trace<'gc>>(&mut self, cc: &mut C) {
+        cc.trace_weak(self)
     }
 }
 

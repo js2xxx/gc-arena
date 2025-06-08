@@ -34,13 +34,14 @@ pub(crate) fn derive(s: synstructure::Structure) -> TokenStream {
     }
 
     let mut mode = None;
+    let mut is_ref = false;
     let mut override_bound = None;
     let mut gc_lifetime = None;
 
     fn usage_error(meta: &syn::meta::ParseNestedMeta, msg: &str) -> syn::parse::Error {
         meta.error(format_args!(
             "{msg}. `#[collect(...)]` requires one mode \
-            (`static`, `no_drop`, or `unsafe_drop`) and optionally `bound(...)`."
+            (`static`, `no_drop` (`ref`?), or `unsafe_drop` (`ref`?)) and optionally `bound(...)`."
         ))
     }
 
@@ -79,6 +80,8 @@ pub(crate) fn derive(s: synstructure::Structure) -> TokenStream {
                 mode = Some(Mode::NoDrop);
             } else if meta.path.is_ident("unsafe_drop") {
                 mode = Some(Mode::UnsafeDrop);
+            } else if meta.path.is_ident("ref") {
+                is_ref = true;
             } else {
                 return Err(usage_error(&meta, "unknown option"));
             }
@@ -93,6 +96,12 @@ pub(crate) fn derive(s: synstructure::Structure) -> TokenStream {
     }
 
     let mode = mode.unwrap_or(Mode::NoDrop);
+
+    if is_ref && mode == Mode::RequireStatic {
+        return quote_spanned! {Span::call_site() =>
+            compile_error!("`#[collect(static)]` cannot be used with `#[collect(ref)]`");
+        };
+    }
 
     let where_clause: TokenStream = if mode == Mode::RequireStatic {
         quote!(where Self: 'static)
@@ -109,8 +118,30 @@ pub(crate) fn derive(s: synstructure::Structure) -> TokenStream {
             gen unsafe impl<'gc> ::gc_arena::Collect<'gc> for @Self #where_clause {
                 const NEEDS_TRACE: bool = false;
             }
+
+            gen unsafe impl<'gc> ::gc_arena::collect::CollectRef<'gc> for @Self #where_clause {
+                const NEEDS_TRACE: bool = false;
+            }
         })
     } else {
+        let trait_ = if is_ref {
+            quote!(::gc_arena::collect::CollectRef)
+        } else {
+            quote!(::gc_arena::Collect)
+        };
+
+        let trace_func = if is_ref {
+            quote!(trace_ref)
+        } else {
+            quote!(trace)
+        };
+
+        let self_arg = if is_ref {
+            quote!(&self)
+        } else {
+            quote!(&mut self)
+        };
+
         let mut impl_struct = s.clone();
 
         let mut needs_trace_expr = TokenStream::new();
@@ -175,11 +206,16 @@ pub(crate) fn derive(s: synstructure::Structure) -> TokenStream {
                 // items (e.g. `gc_arena::Collect`), so this won't cause any hygiene issues
                 let call_span = b.ast().span().resolved_at(Span::call_site());
                 quote_spanned!(call_span=>
-                    || <#ty as ::gc_arena::Collect>::NEEDS_TRACE
+                    || <#ty as #trait_>::NEEDS_TRACE
                 )
                 .to_tokens(&mut needs_trace_expr);
             }
         }
+
+        if !is_ref {
+            impl_struct.bind_with(|_| synstructure::BindStyle::RefMut);
+        }
+
         // Likewise, this will skip any fields that have `#[collect(static)]`
         let trace_body = impl_struct.each(|bi| {
             // See the above handling of `NEEDS_TRACE` for an explanation of this
@@ -193,7 +229,7 @@ pub(crate) fn derive(s: synstructure::Structure) -> TokenStream {
                     // merge the spans. This is purely for diagnostic purposes, and has no effect
                     // on correctness
                     let bi = #bi;
-                    cc.trace(bi);
+                    cc.#trace_func(bi);
                 }
             )
         });
@@ -229,32 +265,72 @@ pub(crate) fn derive(s: synstructure::Structure) -> TokenStream {
             impl_struct.add_bounds(AddBounds::Generics);
         };
 
-        if let Some(gc_lifetime) = gc_lifetime {
+        let mut tt = if let Some(gc_lifetime) = &gc_lifetime {
             impl_struct.gen_impl(quote! {
-                gen unsafe impl ::gc_arena::Collect<#gc_lifetime> for @Self #where_clause {
+                gen unsafe impl #trait_<#gc_lifetime> for @Self #where_clause {
                     const NEEDS_TRACE: bool = #needs_trace_expr;
 
                     #[inline]
-                    fn trace<Trace: ::gc_arena::collect::Trace<#gc_lifetime>>(&self, cc: &mut Trace) {
+                    fn #trace_func<Trace: ::gc_arena::collect::Trace<#gc_lifetime>>(
+                        #self_arg,
+                        cc: &mut Trace
+                    ) {
                         match *self { #trace_body }
                     }
                 }
             })
         } else {
             impl_struct.gen_impl(quote! {
-                gen unsafe impl<'gc> ::gc_arena::Collect<'gc> for @Self #where_clause {
+                gen unsafe impl<'gc> #trait_<'gc> for @Self #where_clause {
                     const NEEDS_TRACE: bool = #needs_trace_expr;
 
                     #[inline]
-                    fn trace<Trace: ::gc_arena::collect::Trace<'gc>>(&self, cc: &mut Trace) {
+                    fn #trace_func<Trace: ::gc_arena::collect::Trace<'gc>>(
+                        #self_arg,
+                        cc: &mut Trace
+                    ) {
                         match *self { #trace_body }
                     }
                 }
             })
+        };
+
+        if is_ref {
+            tt.extend(if let Some(gc_lifetime) = gc_lifetime {
+                impl_struct.gen_impl(quote! {
+                    gen unsafe impl ::gc_arena::Collect<#gc_lifetime> for @Self #where_clause {
+                        const NEEDS_TRACE = <Self as #trait_<#gc_lifetime>>::NEEDS_TRACE;
+
+                        #[inline]
+                        fn trace<Trace: ::gc_arena::collect::Trace<#gc_lifetime>>(
+                            &mut self,
+                            cc: &mut Trace
+                        ) {
+                            <Self as #trait_<#gc_lifetime>>::#trace_func(self, cc);
+                        }
+                    }
+                })
+            } else {
+                impl_struct.gen_impl(quote! {
+                    gen unsafe impl<'gc> ::gc_arena::Collect<'gc> for @Self #where_clause {
+                        const NEEDS_TRACE = <Self as #trait_<'gc>>::NEEDS_TRACE;
+
+                        #[inline]
+                        fn trace<Trace: ::gc_arena::collect::Trace<'gc>>(
+                            &mut self,
+                            cc: &mut Trace
+                        ) {
+                            <Self as #trait_<'gc>>::#trace_func(self, cc);
+                        }
+                    }
+                })
+            });
         }
+
+        tt
     };
 
-    let drop_impl = if mode == Mode::NoDrop {
+    let drop_impl = if matches!(mode, Mode::NoDrop) {
         let mut drop_struct = s.clone();
         drop_struct.add_bounds(AddBounds::None).gen_impl(quote! {
             gen impl ::gc_arena::__MustNotImplDrop for @Self {}

@@ -59,7 +59,7 @@ where
 }
 
 unsafe impl<'gc, T: ?Sized + 'gc, M: 'gc> Collect<'gc> for Unique<'gc, T, M> {
-    fn trace<U: Trace<'gc>>(&self, cc: &mut U) {
+    fn trace<U: Trace<'gc>>(&mut self, cc: &mut U) {
         cc.trace_unique(self);
     }
 }

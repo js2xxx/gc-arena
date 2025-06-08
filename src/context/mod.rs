@@ -81,16 +81,17 @@ pub(crate) struct Context {
     gray_again: Cell<Option<GcBox>>,
 }
 
+impl crate::sealed::Sealed for Context {}
 impl<'gc> Trace<'gc> for Context {
-    fn trace_gc<T: ?Sized + 'gc, M: 'gc>(&mut self, gc: Gc<'gc, T, M>) {
+    fn trace_gc<T: ?Sized + 'gc, M: 'gc>(&mut self, gc: &mut Gc<'gc, T, M>) {
         Context::trace(self, gc.ptr)
     }
 
-    fn trace_weak<T: ?Sized + 'gc, M: 'gc>(&mut self, gc: Weak<'gc, T, M>) {
+    fn trace_weak<T: ?Sized + 'gc, M: 'gc>(&mut self, gc: &mut Weak<'gc, T, M>) {
         Context::trace_weak(self, gc.inner.ptr)
     }
 
-    fn trace_unique<T: ?Sized + 'gc, M: 'gc>(&mut self, gc: &Unique<'gc, T, M>) {
+    fn trace_unique<T: ?Sized + 'gc, M: 'gc>(&mut self, gc: &mut Unique<'gc, T, M>) {
         Context::trace(self, gc.ptr);
     }
 }
@@ -175,7 +176,7 @@ impl Context {
     #[deny(unsafe_op_in_unsafe_fn)]
     pub(crate) unsafe fn do_collection<'gc, R: Collect<'gc> + ?Sized>(
         &mut self,
-        root: &R,
+        root: &mut R,
         run_until: RunUntil,
         stop: Stop,
         a: &dyn Allocator,
@@ -487,7 +488,7 @@ impl Context {
         }
     }
 
-    fn mark_one<'gc, R: Collect<'gc> + ?Sized>(&mut self, root: &R) -> ControlFlow<()> {
+    fn mark_one<'gc, R: Collect<'gc> + ?Sized>(&mut self, root: &mut R) -> ControlFlow<()> {
         // We look for an object first in the normal gray queue, then the "gray again"
         // queue. Processing "gray again" objects later gives them more time to
         // be mutated again without triggering another write barrier.
