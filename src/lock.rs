@@ -189,12 +189,12 @@ unsafe impl<'gc, T: Collect<'gc> + ?Sized + 'gc> Collect<'gc> for Lock<T> {
     }
 }
 
-unsafe impl<'gc, T: Collect<'gc> + Copy + 'gc> CollectRef<'gc> for Lock<T> {
+unsafe impl<'gc, T: Collect<'gc> + Default + 'gc> CollectRef<'gc> for Lock<T> {
     const NEEDS_TRACE: bool = T::NEEDS_TRACE;
 
     #[inline]
     fn trace_ref<C: Trace<'gc>>(&self, cc: &mut C) {
-        let mut t = self.get();
+        let mut t = self.take();
         cc.trace(&mut t);
         self.cell.set(t);
     }

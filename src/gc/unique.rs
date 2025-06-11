@@ -254,7 +254,7 @@ impl<'gc, T: Collect<'gc> + 'gc> Unique<'gc, T> {
     where
         T: Unsize<Dyn> + 'a,
         Dyn: 'gc + ?Sized,
-        native::Unsized<Dyn>: MetaCollect<'gc, 'a, T, Ptr = NonNull<T>>,
+        native::Unsized<Dyn>: MetaCollect<'gc, 'a, T>,
     {
         let metadata = core::ptr::metadata(&t as &Dyn);
 

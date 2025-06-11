@@ -159,7 +159,7 @@ impl<'gc, T: Collect<'gc> + 'gc> Gc<'gc, T> {
     where
         T: Unsize<Dyn> + 'a,
         Dyn: 'gc + 'a + ?Sized,
-        native::Unsized<Dyn>: MetaCollect<'gc, 'a, T, Ptr = NonNull<T>>,
+        native::Unsized<Dyn>: MetaCollect<'gc, 'a, T>,
         PtrMeta<Dyn>: Metadata<'a, Dyn>,
     {
         Unique::new_unsize::<Dyn>(mc, t).into_gc()
@@ -279,7 +279,7 @@ impl<'gc, T: ?Sized + 'gc, M: 'gc> Gc<'gc, T, M> {
     /// It must be valid to dereference a `N<U>::Ptr` that has come from casting
     /// a `M<T>::Ptr`.
     #[inline]
-    pub unsafe fn cast<U: 'gc, N: 'gc>(this: Gc<'gc, T, M>) -> Gc<'gc, U, N> {
+    pub unsafe fn cast<U: 'gc + ?Sized, N: 'gc>(this: Gc<'gc, T, M>) -> Gc<'gc, U, N> {
         Gc {
             ptr: this.ptr,
             _invariant: PhantomData,
