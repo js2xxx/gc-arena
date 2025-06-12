@@ -460,6 +460,16 @@ impl<'gc> Gc<'gc, str> {
     }
 }
 
+impl<'gc, T: 'gc> IntoIterator for Gc<'gc, [T]> {
+    type Item = &'gc T;
+
+    type IntoIter = core::slice::Iter<'gc, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        Gc::get_ref(self).iter()
+    }
+}
+
 impl<'gc, 'a, 'b, T, U, M, N> PartialEq<Gc<'gc, U, N>> for Gc<'gc, T, M>
 where
     T: PartialEq<U> + ?Sized + 'gc + 'a,
