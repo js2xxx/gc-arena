@@ -15,12 +15,12 @@ pub mod arena;
 pub mod barrier;
 pub mod collect;
 mod context;
-pub mod dynamic_roots;
 pub mod gc;
 pub mod lock;
 pub mod metrics;
 mod no_drop;
 pub mod ptr;
+pub mod root;
 mod types;
 pub mod vec;
 
@@ -42,7 +42,6 @@ pub use self::{
     arena::{Arena, Rootable},
     collect::Collect,
     context::{Finalization, Mutation},
-    dynamic_roots::{DynamicRoot, DynamicRootSet},
     gc::Gc,
     lock::{GcLock, GcRefLock, Lock, RefLock},
 };

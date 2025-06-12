@@ -12,8 +12,9 @@ use crate::{Rootable, collect::Collect};
 #[repr(transparent)]
 pub struct Static<T: ?Sized>(pub T);
 
-impl<'a, T: ?Sized + 'static> Rootable<'a> for Static<T> {
-    type Root = Static<T>;
+impl<T: ?Sized> crate::sealed::Sealed for Static<T> {}
+impl<T: ?Sized + 'static> Rootable for Static<T> {
+    type Root<'a> = Static<T>;
 }
 
 unsafe impl<'gc, T: ?Sized + 'static> Collect<'gc> for Static<T> {

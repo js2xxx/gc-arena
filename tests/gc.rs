@@ -6,8 +6,8 @@ use core::{cell::Cell, mem};
 use std::{collections::HashMap, rc::Rc};
 
 use gc_arena::{
-    Arena, Collect, DynamicRootSet, Gc, Lock, RefLock, Rootable, arena::CollectionPhase, gc::Weak,
-    metrics::Pacing, static_collect,
+    Arena, Collect, Gc, Lock, RefLock, Rootable, arena::CollectionPhase, gc::Weak, metrics::Pacing,
+    root::RootSet, static_collect,
 };
 #[cfg(feature = "std")]
 use rand::distributions::Distribution;
@@ -401,7 +401,8 @@ fn test_dynamic_roots() {
     let rc_a = Rc::new(12);
     let rc_b = Rc::new("hello".to_owned());
 
-    let mut arena = Arena::<Rootable![DynamicRootSet<'_>]>::new(|mc| DynamicRootSet::new(mc));
+    let mut root_set = RootSet::new();
+    let mut arena = Arena::with_root_set(&mut root_set);
 
     let root_a = arena
         .mutate(|mc, root_set| root_set.stash::<Rootable![Rc<i32>]>(mc, Gc::new(mc, rc_a.clone())));
@@ -459,8 +460,11 @@ fn test_dynamic_roots() {
 #[test]
 #[should_panic]
 fn test_dynamic_bad_set() {
-    let arena1 = Arena::<Rootable![DynamicRootSet<'_>]>::new(|mc| DynamicRootSet::new(mc));
-    let arena2 = Arena::<Rootable![DynamicRootSet<'_>]>::new(|mc| DynamicRootSet::new(mc));
+    let mut root_set1 = RootSet::new();
+    let mut root_set2 = RootSet::new();
+
+    let arena1 = Arena::with_root_set(&mut root_set1);
+    let arena2 = Arena::with_root_set(&mut root_set2);
 
     let dyn_root = arena1.mutate(|mc, root| root.stash::<Rootable![i32]>(mc, Gc::new(mc, 44)));
 

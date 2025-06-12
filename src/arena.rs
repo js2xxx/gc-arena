@@ -18,9 +18,21 @@ use crate::{
 /// implement `Rootable<'a>` for *any* possible `'a`. This is necessary so that
 /// the `Root` types can be branded by the unique, invariant lifetimes that
 /// makes an `Arena` sound.
-pub trait Rootable<'a> {
+pub trait Rootable: crate::sealed::Sealed {
     /// The rooted GC-managed type.
+    // The desired bound here should be `?Sized + 'a`, however to support borrowed
+    // root sets, we need the borrow checker to bound the higher-ranked lifetime
+    // `'gc: 'root_set`, which it's unable to support by now.
+    type Root<'a>: ?Sized;
+}
+
+#[doc(hidden)]
+pub trait DynRootable<'a>: crate::sealed::Sealed {
     type Root: ?Sized + 'a;
+}
+
+impl<T: ?Sized + for<'a> DynRootable<'a> + 'static> Rootable for T {
+    type Root<'a> = <T as DynRootable<'a>>::Root;
 }
 
 /// A marker type used by the `Rootable!` macro instead of a bare trait object.
@@ -30,8 +42,9 @@ pub trait Rootable<'a> {
 #[doc(hidden)]
 pub struct __DynRootable<T: ?Sized>(PhantomData<T>);
 
-impl<'a, T: ?Sized + Rootable<'a>> Rootable<'a> for __DynRootable<T> {
-    type Root = <T as Rootable<'a>>::Root;
+impl<T: ?Sized> crate::sealed::Sealed for __DynRootable<T> {}
+impl<T: ?Sized + Rootable> Rootable for __DynRootable<T> {
+    type Root<'a> = <T as Rootable>::Root<'a>;
 }
 
 /// A convenience macro for quickly creating a type that implements `Rootable`.
@@ -77,7 +90,7 @@ macro_rules! Rootable {
     ($gc:lifetime => $root:ty) => {
         // Instead of generating an impl of `Rootable`, we use a trait object. Thus, we avoid the
         // need to generate a new type for each invocation of this macro.
-        $crate::__DynRootable::<dyn for<$gc> $crate::Rootable<$gc, Root = $root>>
+        $crate::__DynRootable::<dyn for<$gc> $crate::arena::DynRootable<$gc, Root = $root>>
     };
     ($root:ty) => {
         $crate::Rootable!['__gc => $crate::__unelide_lifetimes!('__gc; $root)]
@@ -85,7 +98,7 @@ macro_rules! Rootable {
 }
 
 /// A helper type alias for a `Rootable::Root` for a specific lifetime.
-pub type Root<'a, R> = <R as Rootable<'a>>::Root;
+pub type Root<'a, R> = <R as Rootable>::Root<'a>;
 
 #[expect(missing_docs, reason = "self-describing type")]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -160,24 +173,20 @@ impl<A: Allocator> Drop for ContextAdapter<A> {
 /// "sufficiently small" calls to `mutate`) that is both extremely safe and zero
 /// overhead vs what you would write in C with raw pointers and manually
 /// ensuring that invariants are held.
-pub struct Arena<R, A: Allocator = Global>
-where
-    R: for<'a> Rootable<'a>,
-{
+pub struct Arena<R: Rootable, A: Allocator = Global> {
     context: ContextAdapter<A>,
     root: Root<'static, R>,
 }
 
 impl<R> Arena<R>
 where
-    R: for<'a> Rootable<'a>,
-    for<'a> Root<'a, R>: Sized,
+    R: for<'a> Rootable<Root<'a>: Sized>,
 {
     /// Create a new arena with the given garbage collector tuning parameters.
     ///
     /// The caller should provide a closure that accepts a `Mutation<'gc>` and
     /// returns the appropriate root.
-    pub fn new<F>(f: F) -> Arena<R>
+    pub fn new<F>(f: F) -> Self
     where
         F: for<'gc> FnOnce(&Mutation<'gc>) -> Root<'gc, R>,
     {
@@ -185,7 +194,7 @@ where
     }
 
     /// Similar to `new`, but allows for constructor that can fail.
-    pub fn try_new<F, E>(f: F) -> Result<Arena<R>, E>
+    pub fn try_new<F, E>(f: F) -> Result<Self, E>
     where
         F: for<'gc> FnOnce(&Mutation<'gc>) -> Result<Root<'gc, R>, E>,
     {
@@ -193,10 +202,23 @@ where
     }
 }
 
+impl<'r> Arena<&'r mut crate::root::RootSet> {
+    /// Creates a new arena with the given root set.
+    pub fn with_root_set(root_set: &'r mut crate::root::RootSet) -> Self {
+        Self::new(|mc| crate::root::RootedSet::new(root_set, mc))
+    }
+}
+
+impl<'r, A: Allocator> Arena<&'r mut crate::root::RootSet, A> {
+    /// Creates a new arena with the given root set and an associated allocator.
+    pub fn with_root_set_in(root_set: &'r mut crate::root::RootSet, alloc: A) -> Self {
+        Self::new_in(alloc, |mc| crate::root::RootedSet::new(root_set, mc))
+    }
+}
+
 impl<R, A: Allocator> Arena<R, A>
 where
-    R: for<'a> Rootable<'a>,
-    for<'a> Root<'a, R>: Sized,
+    R: for<'a> Rootable<Root<'a>: Sized>,
 {
     /// Create a new arena with the given garbage collector tuning parameters.
     ///
@@ -240,11 +262,10 @@ where
         f: impl for<'gc> FnOnce(&Mutation<'gc>, Root<'gc, R>) -> Root<'gc, R2>,
     ) -> Arena<R2, A>
     where
-        R2: for<'a> Rootable<'a>,
-        for<'a> Root<'a, R2>: Sized,
+        R2: for<'a> Rootable<Root<'a>: Sized>,
     {
         self.context.root_barrier();
-        let new_root: Root<'static, R2> = unsafe {
+        let new_root: Root<R2> = unsafe {
             let mc: Mutation<'_> = Mutation::new(&self.context, self.context.allocator());
             f(&mc, self.root)
         };
@@ -260,11 +281,10 @@ where
         f: impl for<'gc> FnOnce(&Mutation<'gc>, Root<'gc, R>) -> Result<Root<'gc, R2>, E>,
     ) -> Result<Arena<R2, A>, E>
     where
-        R2: for<'a> Rootable<'a>,
-        for<'a> Root<'a, R2>: Sized,
+        R2: for<'a> Rootable<Root<'a>: Sized>,
     {
         self.context.root_barrier();
-        let new_root: Root<'static, R2> = unsafe {
+        let new_root: Root<R2> = unsafe {
             let mc: Mutation<'_> = Mutation::new(&self.context, self.context.allocator());
             f(&mc, self.root)?
         };
@@ -275,10 +295,7 @@ where
     }
 }
 
-impl<R, A: Allocator> Arena<R, A>
-where
-    R: for<'a> Rootable<'a>,
-{
+impl<R: Rootable, A: Allocator> Arena<R, A> {
     /// The primary means of interacting with a garbage collected arena. Accepts
     /// a callback which receives a `Mutation<'gc>` and a reference to the root,
     /// and can return any non garbage collected value. The callback may
@@ -291,7 +308,7 @@ where
     {
         unsafe {
             let mc: Mutation<'_> = Mutation::new(&self.context, self.context.allocator());
-            let root: &'static Root<'_, R> = &*(&self.root as *const _);
+            let root: &Root<'static, R> = &*(&self.root as *const _);
             f(&mc, root)
         }
     }
@@ -306,7 +323,7 @@ where
         self.context.root_barrier();
         unsafe {
             let mc: Mutation<'_> = Mutation::new(&self.context, self.context.allocator());
-            let root: &'static mut Root<'_, R> = &mut *(&mut self.root as *mut _);
+            let root: &mut Root<'static, R> = &mut *(&mut self.root as *mut _);
             f(&mc, root)
         }
     }
@@ -335,8 +352,7 @@ where
 
 impl<R, A: Allocator> Arena<R, A>
 where
-    R: for<'a> Rootable<'a>,
-    for<'a> Root<'a, R>: Collect<'a>,
+    R: for<'a> Rootable<Root<'a>: Collect<'a>>,
 {
     /// Run incremental garbage collection until the allocation debt is zero.
     ///
@@ -458,12 +474,11 @@ where
     }
 }
 
-pub struct MarkedArena<'a, R: for<'b> Rootable<'b>, A: Allocator = Global>(&'a mut Arena<R, A>);
+pub struct MarkedArena<'a, R: Rootable, A: Allocator = Global>(&'a mut Arena<R, A>);
 
 impl<'a, R, A: Allocator> MarkedArena<'a, R, A>
 where
-    R: for<'b> Rootable<'b>,
-    for<'b> Root<'b, R>: Collect<'b>,
+    R: for<'b> Rootable<Root<'b>: Collect<'b>>,
 {
     /// Examine the state of a fully marked arena.
     ///
@@ -481,7 +496,7 @@ where
         unsafe {
             let mc: Finalization<'_> =
                 Finalization::new(&self.0.context, &self.0.context.allocator());
-            let root: &'static Root<'_, R> = &*(&self.0.root as *const _);
+            let root: &Root<'_, R> = &*(&self.0.root as *const _);
             f(&mc, root)
         }
     }
@@ -518,5 +533,29 @@ where
     unsafe {
         let context = ContextAdapter(Context::new(), Global);
         f(&Mutation::new(&context.0, &Global))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::string::{String, ToString};
+
+    use crate::{Gc, root::RootSet};
+
+    #[test]
+    fn root_set() {
+        let mut root_set = RootSet::new();
+        for i in 0..2 {
+            let mut a = crate::Arena::with_root_set(&mut root_set);
+
+            let s =
+                a.mutate(|mc, rs| rs.stash::<Rootable![String]>(mc, Gc::new(mc, i.to_string())));
+
+            a.finish_cycle();
+            a.mutate(|_, rs| assert_eq!(*rs.fetch(&s), i.to_string()));
+
+            drop(s);
+            a.finish_cycle();
+        }
     }
 }
