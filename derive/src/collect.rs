@@ -262,7 +262,7 @@ pub(crate) fn derive(s: synstructure::Structure) -> TokenStream {
         if override_bound.is_some() {
             impl_struct.add_bounds(AddBounds::None);
         } else {
-            impl_struct.add_bounds(AddBounds::Generics);
+            impl_struct.add_bounds(AddBounds::Fields);
         };
 
         let mut tt = if let Some(gc_lifetime) = &gc_lifetime {

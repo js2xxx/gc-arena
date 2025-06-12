@@ -15,16 +15,7 @@ use core::{
 #[cfg(feature = "std")]
 use std::collections::{HashMap, HashSet};
 
-use crate::collect::{Collect, CollectRef, Trace};
-
-unsafe impl<'gc, T: CollectRef<'gc> + ?Sized> Collect<'gc> for &T {
-    const NEEDS_TRACE: bool = <T as CollectRef<'gc>>::NEEDS_TRACE;
-
-    #[inline]
-    fn trace<C: Trace<'gc>>(&mut self, cc: &mut C) {
-        <T as CollectRef<'gc>>::trace_ref(self, cc)
-    }
-}
+use crate::collect::{Collect, CollectRef};
 
 /// If a type is static, we know that it can never hold `Gc` pointers, so it is
 /// safe to provide a simple empty `Collect` implementation.
