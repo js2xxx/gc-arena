@@ -403,6 +403,19 @@ impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: Metadata<'a, T>> Gc<'gc, T, M> {
         }
     }
 
+    /// Converts the `Gc` pointer into a `Unique` pointer, assuming that it is
+    /// the only reference to the allocation.
+    ///
+    /// # Safety
+    ///
+    /// The caller must guarantee that this is the only reference to the
+    /// underlying allocation.
+    #[inline]
+    pub unsafe fn as_unique_unchecked(this: Self) -> Unique<'gc, T, M> {
+        // SAFETY: `this` is guaranteed to be unique.
+        unsafe { Unique::from_raw(Gc::addr(this)) }
+    }
+
     /// Returns true if two `Gc`s point to the same allocation.
     ///
     /// Similarly to `Rc::ptr_eq` and `Arc::ptr_eq`, this function ignores the
