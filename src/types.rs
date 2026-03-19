@@ -77,7 +77,7 @@ impl GcBox {
     /// # Safety
     ///
     /// `ptr` must point to a valid GC box.
-    pub(crate) unsafe fn from_raw(ptr: NonNull<()>) -> Self {
+    pub(crate) const unsafe fn from_raw(ptr: NonNull<()>) -> Self {
         Self(ptr)
     }
 
@@ -113,7 +113,7 @@ impl GcBox {
     }
 
     #[inline(always)]
-    pub(crate) unsafe fn metadata<M: Copy>(&self) -> M {
+    pub(crate) const unsafe fn metadata<M: Copy>(&self) -> M {
         let offset = const { size_of::<GcBoxHeader>() + size_of::<M>() };
         unsafe {
             let ptr = self.0.byte_sub(offset);
@@ -122,7 +122,7 @@ impl GcBox {
     }
 
     #[inline(always)]
-    pub(crate) fn header(&self) -> &GcBoxHeader {
+    pub(crate) const fn header(&self) -> &GcBoxHeader {
         let offset = const { size_of::<GcBoxHeader>() };
         unsafe {
             let ptr = self.0.byte_sub(offset);

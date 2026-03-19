@@ -1,6 +1,6 @@
 #![no_std]
 #![feature(allocator_api)]
-#![feature(maybe_uninit_write_slice, maybe_uninit_fill, maybe_uninit_slice)]
+#![feature(maybe_uninit_fill)]
 #![feature(min_specialization)]
 #![feature(ptr_metadata)]
 #![feature(trusted_len)]

@@ -362,7 +362,7 @@ impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: Metadata<'a, T>> Gc<'gc, T, M> {
     ///
     /// [weaked]: Weak
     #[inline]
-    pub fn downgrade(this: Gc<'gc, T, M>) -> Weak<'gc, T, M> {
+    pub const fn downgrade(this: Gc<'gc, T, M>) -> Weak<'gc, T, M> {
         Weak { inner: this }
     }
 
@@ -370,14 +370,14 @@ impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: Metadata<'a, T>> Gc<'gc, T, M> {
     ///
     /// Very few guarantees are given about this pointer, except that it is
     /// properly aligned, and points to a valid instance of `T`
-    pub fn addr(this: Self) -> NonNull<()> {
+    pub const fn addr(this: Self) -> NonNull<()> {
         this.ptr.into_raw()
     }
 
     /// Returns the metadata associated with this `Gc` pointer.
     ///
     /// Similar to [`core::ptr::metadata`].
-    pub fn metadata(this: Self) -> M {
+    pub const fn metadata(this: Self) -> M {
         unsafe { this.ptr.metadata::<M>() }
     }
 
@@ -385,7 +385,7 @@ impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: Metadata<'a, T>> Gc<'gc, T, M> {
     ///
     /// Very few guarantees are given about this pointer, except that it is
     /// properly aligned, and points to a valid instance of `T`
-    pub fn to_raw_parts(this: Self) -> (NonNull<()>, M) {
+    pub const fn to_raw_parts(this: Self) -> (NonNull<()>, M) {
         (Self::addr(this), Self::metadata(this))
     }
 
@@ -395,7 +395,7 @@ impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: Metadata<'a, T>> Gc<'gc, T, M> {
     ///
     /// The given pointer must have been obtained from [`Gc::addr`] or
     /// [`Gc::to_raw_parts`] within the same mutation session.
-    pub unsafe fn from_raw(raw: NonNull<()>) -> Self {
+    pub const unsafe fn from_raw(raw: NonNull<()>) -> Self {
         Gc {
             // SAFETY: `raw` is valid and aligned guaranteed by the caller.
             ptr: unsafe { GcBox::from_raw(raw) },
@@ -411,7 +411,7 @@ impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: Metadata<'a, T>> Gc<'gc, T, M> {
     /// The caller must guarantee that this is the only reference to the
     /// underlying allocation.
     #[inline]
-    pub unsafe fn as_unique_unchecked(this: Self) -> Unique<'gc, T, M> {
+    pub const unsafe fn as_unique_unchecked(this: Self) -> Unique<'gc, T, M> {
         // SAFETY: `this` is guaranteed to be unique.
         unsafe { Unique::from_raw(Gc::addr(this)) }
     }
@@ -466,7 +466,7 @@ impl<'gc> Gc<'gc, str> {
     /// # Safety
     ///
     /// The caller must guarantee that this contains a valid UTF-8 string.
-    pub unsafe fn from_utf8_unchecked(this: Gc<'gc, [u8]>) -> Self {
+    pub const unsafe fn from_utf8_unchecked(this: Gc<'gc, [u8]>) -> Self {
         let (ptr, _) = Gc::to_raw_parts(this);
         // SAFETY: The caller guarantees that this is a valid UTF-8 string.
         unsafe { Gc::from_raw(ptr) }

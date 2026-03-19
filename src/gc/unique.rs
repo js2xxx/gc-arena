@@ -538,19 +538,19 @@ impl<'gc, T: ?Sized + 'gc> Unique<'gc, T> {
 
 impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: Metadata<'a, T>> Unique<'gc, T, M> {
     /// Returns the raw address of the `Unique`.
-    pub fn addr(this: &Self) -> NonNull<()> {
+    pub const fn addr(this: &Self) -> NonNull<()> {
         this.ptr.into_raw()
     }
 
     /// Returns the raw address of the `Unique`.
     ///
     /// The mutable variant of [`Unique::addr`] exists for clarity of borrowing.
-    pub fn addr_mut(this: &mut Self) -> NonNull<()> {
+    pub const fn addr_mut(this: &mut Self) -> NonNull<()> {
         this.ptr.into_raw()
     }
 
     /// Returns the metadata associated with the `Unique`.
-    pub fn metadata(this: &Self) -> M {
+    pub const fn metadata(this: &Self) -> M {
         unsafe { this.ptr.metadata::<M>() }
     }
 
@@ -558,7 +558,7 @@ impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: Metadata<'a, T>> Unique<'gc, T, M> {
     ///
     /// The pointer is guaranteed to be valid only in the current collection
     /// phase.
-    pub fn into_raw_parts(this: Self) -> (NonNull<()>, M) {
+    pub const fn into_raw_parts(this: Self) -> (NonNull<()>, M) {
         (Self::addr(&this), Self::metadata(&this))
     }
 
@@ -570,7 +570,7 @@ impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: Metadata<'a, T>> Unique<'gc, T, M> {
     /// [`Unique::into_raw_parts`], or [`Gc::addr`] within the same mutation
     /// session. There must also exist no other garbage collected pointers
     /// which point to the same allocation.
-    pub unsafe fn from_raw(raw: NonNull<()>) -> Unique<'gc, T, M> {
+    pub const unsafe fn from_raw(raw: NonNull<()>) -> Unique<'gc, T, M> {
         Unique {
             // SAFETY: `raw` is valid and aligned guaranteed by the caller.
             ptr: unsafe { GcBox::from_raw(raw) },
@@ -579,7 +579,7 @@ impl<'gc, 'a, T: 'gc + 'a + ?Sized, M: Metadata<'a, T>> Unique<'gc, T, M> {
     }
 
     /// Converts the `Unique` into a regular [`Gc`].
-    pub fn into_gc(self) -> Gc<'gc, T, M> {
+    pub const fn into_gc(self) -> Gc<'gc, T, M> {
         // SAFETY: Trivial.
         unsafe { Gc::from_raw(Unique::into_raw_parts(self).0) }
     }
